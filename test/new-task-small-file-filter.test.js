@@ -248,6 +248,7 @@ const loadFilterService = function (options) {
     const pendingOptionCallbacks = [];
     const pendingChangeCallbacks = [];
     const pendingStartCallbacks = [];
+    const pendingWaitingListCallbacks = [];
     const optionRpcIdentities = [];
     const changeRpcIdentities = [];
     const startRpcIdentities = [];
@@ -337,7 +338,12 @@ const loadFilterService = function (options) {
                     silent: silent,
                     requestParams: requestParams
                 });
-                callback({success: true, data: options.waitingTasks || []});
+                const response = {success: true, data: options.waitingTasks || []};
+                if (options.deferWaitingList) {
+                    pendingWaitingListCallbacks.push({callback: callback, response: response});
+                } else {
+                    callback(response);
+                }
             },
             changeTaskOptions: function (gid, rpcOptions, callback) {
                 changeRpcIdentities.push(rpcIdentity);
@@ -408,6 +414,10 @@ const loadFilterService = function (options) {
         },
         resolveStart: function (response) {
             const pending = pendingStartCallbacks.shift();
+            pending.callback(response || pending.response);
+        },
+        resolveWaitingList: function (response) {
+            const pending = pendingWaitingListCallbacks.shift();
             pending.callback(response || pending.response);
         },
         getSavedQueue: function () { return savedQueue || []; },
@@ -1060,6 +1070,32 @@ test('keeps a recovered Download Later magnet child paused after filtering', fun
     assert.strictEqual(context.getSavedQueue().length, 0);
 });
 
+test('does not choose an arbitrary child when multiple paused tasks follow the same root', function () {
+    const context = loadFilterService({
+        waitingTasks: [
+            {gid: 'child-a', following: 'root'},
+            {gid: 'child-b', following: 'root'}
+        ],
+        statusResponseForGid: function () {
+            return {success: false, data: {message: 'No such download for GID#root'}};
+        }
+    });
+
+    context.service.enqueue('root', {
+        thresholdBytes: 104857600,
+        startAfterFilter: true,
+        sourceType: 'magnet'
+    });
+    context.service.start();
+    context.tick();
+    context.tick();
+
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    assert.strictEqual(context.getSavedQueue()[0].childGid, '');
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.deepStrictEqual(context.startedGids, []);
+});
+
 test('all-small and all-large plans skip option changes and start Download Now', function () {
     const cases = [
         [{index: '1', length: '1', selected: 'true'}, {index: '2', length: '2', selected: 'true'}],
@@ -1141,7 +1177,7 @@ test('tellStatus network failure retains the job without consuming filter retrie
     assert.strictEqual(context.changedOptions.length, 0);
 });
 
-test('explicit not-found response removes a user-deleted job silently', function () {
+test('a missing metadata root without a child remains queued and non-mutating', function () {
     const context = loadFilterService({statusResponses: [{
         success: false, data: {message: 'GID deadbeef is not found'}
     }]});
@@ -1149,7 +1185,10 @@ test('explicit not-found response removes a user-deleted job silently', function
     context.service.start();
     context.tick();
 
-    assert.strictEqual(context.getSavedQueue().length, 0);
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    assert.strictEqual(context.getSavedQueue()[0].childGid, '');
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.deepStrictEqual(context.startedGids, []);
     assert.strictEqual(context.notifications.length, 0);
 });
 
@@ -1409,6 +1448,37 @@ test('RPC switch after tellStatus does not continue the A job against B', functi
     assert.strictEqual(context.getSavedQueue()[0].stage, 'waiting-metadata');
 });
 
+test('RPC switch during metadata-child discovery cannot mutate either endpoint queue', function () {
+    const context = loadFilterService({
+        rpcIdentity: 'rpc-a',
+        deferWaitingList: true,
+        statusResponses: [{success: false, data: {message: 'No such download for GID#root-a'}}]
+    });
+    context.service.enqueue('root-a', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+    context.service.start();
+    context.tick();
+
+    context.setRpcIdentity('rpc-b');
+    context.service.enqueue('root-b', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+    context.resolveWaitingList({
+        success: true,
+        data: [{gid: 'child-a', following: 'root-a'}]
+    });
+
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.getSavedQueue().map(function (job) {
+        return {rpcIdentity: job.rpcIdentity, rootGid: job.rootGid, childGid: job.childGid};
+    }))), [
+        {rpcIdentity: 'rpc-a', rootGid: 'root-a', childGid: ''},
+        {rpcIdentity: 'rpc-b', rootGid: 'root-b', childGid: ''}
+    ]);
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.deepStrictEqual(context.startedGids, []);
+});
+
 test('RPC switch after getOption does not change the A job against B', function () {
     const context = loadFilterService({rpcIdentity: 'rpc-a', deferOptions: true, tasks: {
         task: {gid: 'task', status: 'paused', bittorrent: {}, files: [
@@ -1503,7 +1573,7 @@ test('switching to an RPC identity without jobs clears the previous toolbar stat
     assert.strictEqual(context.service.getStatus().total, 0);
 });
 
-test('deleting the last queued job after prior completion settles the complete summary', function () {
+test('an unresolved missing root remains queued after another job completes', function () {
     const context = loadFilterService({tasks: {
         completed: {gid: 'completed', status: 'paused', bittorrent: {}, files: [
             {index: '1', length: '200', selected: 'true'}
@@ -1515,11 +1585,12 @@ test('deleting the last queued job after prior completion settles the complete s
     context.tick();
     context.tick();
 
-    assert.strictEqual(context.getSavedQueue().length, 0);
-    assert.strictEqual(context.service.getStatus().type, 'complete');
-    assert.strictEqual(context.service.getStatus().textKey, 'format.bt-file-filter.complete');
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    assert.strictEqual(context.getSavedQueue()[0].rootGid, 'deleted');
+    assert.strictEqual(context.service.getStatus().type, 'waiting');
+    assert.strictEqual(context.service.getStatus().textKey, 'format.bt-file-filter.waiting');
     assert.strictEqual(context.service.getStatus().processed, 1);
-    assert.strictEqual(context.service.getStatus().total, 1);
+    assert.strictEqual(context.service.getStatus().total, 2);
 });
 
 test('renders the remembered filter and global toolbar status', function () {

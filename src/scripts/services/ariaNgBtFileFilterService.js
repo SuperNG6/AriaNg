@@ -489,7 +489,10 @@
                 var childGidsByRoot = {};
                 for (var i = 0; i < waitingTasks.length; i++) {
                     if (waitingTasks[i].following) {
-                        childGidsByRoot[waitingTasks[i].following] = waitingTasks[i].gid;
+                        if (!childGidsByRoot[waitingTasks[i].following]) {
+                            childGidsByRoot[waitingTasks[i].following] = [];
+                        }
+                        childGidsByRoot[waitingTasks[i].following].push(waitingTasks[i].gid);
                     }
                 }
 
@@ -498,9 +501,9 @@
                 var recoveredAnyJob = false;
                 for (var j = 0; j < currentJobs.length; j++) {
                     var currentJob = currentJobs[j];
-                    var childGid = childGidsByRoot[currentJob.rootGid];
-                    if (!currentJob.childGid && childGid) {
-                        currentJob.childGid = childGid;
+                    var childGids = childGidsByRoot[currentJob.rootGid] || [];
+                    if (!currentJob.childGid && childGids.length === 1) {
+                        currentJob.childGid = childGids[0];
                         currentJob.stage = 'waiting-files';
                         currentJob.updatedAt = Date.now();
                         recoveredAnyJob = true;
@@ -517,7 +520,7 @@
                     return;
                 }
 
-                removeDeletedJob(job, rpcIdentity);
+                finishTick();
             }, true, ['gid', 'following']);
         };
 
