@@ -198,7 +198,7 @@
                         <span class="bt-file-filter-status-full"
                               ng-bind="btFileFilterStatus.textKey | translate: btFileFilterStatus.textParams"></span>
                         <span class="bt-file-filter-status-compact"
-                              ng-bind="('format.bt-file-filter.compact' | translate: {count: btFileFilterStatus.waiting || (btFileFilterStatus.total - btFileFilterStatus.processed)})"></span>
+                              ng-bind="('format.bt-file-filter.compact' | translate: {count: btFileFilterStatus.type === 'warning' ? btFileFilterStatus.fallback : (btFileFilterStatus.type === 'complete' ? (btFileFilterStatus.filtered + btFileFilterStatus.full) : (btFileFilterStatus.waiting || (btFileFilterStatus.total - btFileFilterStatus.processed)))})"></span>
                     </li>
                 </ul>
             </div>

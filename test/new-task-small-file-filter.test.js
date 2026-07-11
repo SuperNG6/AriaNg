@@ -1324,9 +1324,8 @@ test('terminal remote torrent roots settle after a bounded child creation race',
         assert.strictEqual(context.getSavedQueue().length, 0);
         assert.deepStrictEqual(context.startedGids, []);
         assert.strictEqual(context.service.getStatus().waiting, 0);
-        if (terminalStatus === 'complete') {
-            assert.strictEqual(context.service.getStatus().full, 1);
-        }
+        assert.strictEqual(context.service.getStatus().full, 0);
+        assert.strictEqual(context.service.getStatus().total, 0);
     });
 });
 
@@ -1556,8 +1555,110 @@ test('defers fallback notification while the current batch is still waiting', fu
     }
 
     assert.strictEqual(context.notifications.length, 0);
-    assert.strictEqual(context.getSavedQueue().length, 1);
-    assert.strictEqual(context.getSavedQueue()[0].rootGid, 'waiting');
+    assert.strictEqual(context.getSavedQueue().length, 2);
+    assert(context.getSavedQueue().some(function (job) {
+        return job.rootGid === 'waiting' && job.stage === 'waiting-metadata';
+    }));
+    assert(context.getSavedQueue().some(function (job) {
+        return job.rootGid === 'failed' && job.stage === 'completed-fallback';
+    }));
+});
+
+test('persists completed batch outcomes across reload until the last job settles', function () {
+    const failedTask = {gid: 'failed', status: 'paused', bittorrent: {}, files: [
+        {index: '1', length: '1', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]};
+    const first = loadFilterService({
+        tasks: {
+            failed: failedTask,
+            waiting: {gid: 'waiting', status: 'active', files: []}
+        },
+        taskOptions: {'bt-remove-unselected-file': 'false'},
+        changeResponses: [
+            {success: false}, {success: false}, {success: false}, {success: true}
+        ]
+    });
+    first.service.enqueue('failed', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'torrent'});
+    first.service.enqueue('waiting', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'magnet'});
+    first.service.start();
+
+    for (let i = 0; i < 10 && first.service.getStatus().fallback < 1; i++) {
+        first.tick();
+    }
+
+    const persisted = JSON.parse(JSON.stringify(first.getSavedQueue()));
+    assert.strictEqual(persisted.length, 2);
+    assert(persisted.some(function (job) {
+        return job.rootGid === 'failed' && job.stage === 'completed-fallback';
+    }));
+    assert(persisted.some(function (job) {
+        return job.rootGid === 'waiting' && job.stage === 'waiting-metadata';
+    }));
+    assert.strictEqual(first.notifications.length, 0);
+
+    const second = loadFilterService({
+        savedQueue: persisted,
+        tasks: {waiting: {gid: 'waiting', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '200', selected: 'true'}
+        ]}}
+    });
+    second.service.start();
+    second.tickUntilIdle();
+
+    assert.strictEqual(second.notifications.length, 1);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(second.notifications[0].options.contentParams)), {count: 1});
+    assert.strictEqual(second.service.getStatus().filtered, 0);
+    assert.strictEqual(second.service.getStatus().full, 1);
+    assert.strictEqual(second.service.getStatus().fallback, 1);
+    assert.strictEqual(second.service.getStatus().processed, 2);
+    assert.strictEqual(second.service.getStatus().total, 2);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(second.getSavedQueue())), []);
+});
+
+test('preserves completed outcomes through an RPC switch round trip', function () {
+    const tasks = {
+        failed: {gid: 'failed', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]},
+        waiting: {gid: 'waiting', status: 'active', files: []},
+        other: {gid: 'other', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '200', selected: 'true'}
+        ]}
+    };
+    const context = loadFilterService({
+        rpcIdentity: 'rpc-a',
+        tasks: tasks,
+        taskOptions: {'bt-remove-unselected-file': 'false'},
+        changeResponses: [
+            {success: false}, {success: false}, {success: false}, {success: true}
+        ]
+    });
+    context.service.enqueue('failed', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'torrent'});
+    context.service.enqueue('waiting', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'magnet'});
+    context.service.start();
+    for (let i = 0; i < 10 && context.service.getStatus().fallback < 1; i++) {
+        context.tick();
+    }
+
+    context.setRpcIdentity('rpc-b');
+    context.service.enqueue('other', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'torrent'});
+    context.tickUntilIdle();
+
+    tasks.waiting = {gid: 'waiting', status: 'paused', bittorrent: {}, files: [
+        {index: '1', length: '200', selected: 'true'}
+    ]};
+    context.setRpcIdentity('rpc-a');
+    context.tickUntilIdle();
+
+    assert.strictEqual(context.notifications.length, 1);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.notifications[0].options.contentParams)), {count: 1});
+    assert.strictEqual(context.service.getStatus().fallback, 1);
+    assert.strictEqual(context.service.getStatus().full, 1);
+    assert.strictEqual(context.service.getStatus().processed, 2);
+    assert.strictEqual(context.service.getStatus().total, 2);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.getSavedQueue())), []);
 });
 
 test('emits one fallback notification with the final completed batch count', function () {
@@ -1647,8 +1748,13 @@ test('a metadata-waiting job does not block later ready jobs', function () {
     context.tick();
 
     assert.deepStrictEqual(context.statusGids, ['waiting', 'ready']);
-    assert.strictEqual(context.getSavedQueue().length, 1);
-    assert.strictEqual(context.getSavedQueue()[0].rootGid, 'waiting');
+    assert.strictEqual(context.getSavedQueue().length, 2);
+    assert(context.getSavedQueue().some(function (job) {
+        return job.rootGid === 'waiting' && job.stage === 'waiting-metadata';
+    }));
+    assert(context.getSavedQueue().some(function (job) {
+        return job.rootGid === 'ready' && job.stage === 'completed-full';
+    }));
 });
 
 test('RPC switch after tellStatus does not continue the A job against B', function () {
@@ -1762,6 +1868,51 @@ test('RPC switch after unpause does not remove the A job from B callback context
     assert.strictEqual(context.getSavedQueue()[0].stage, 'starting-full');
 });
 
+test('removed task in a starting stage is silently discarded', function () {
+    const job = {
+        rpcIdentity: 'http|localhost|6800|jsonrpc', rootGid: 'task', childGid: '', thresholdBytes: 100,
+        startAfterFilter: true, sourceType: 'torrent', stage: 'starting-filtered',
+        retryCount: 0, originalRemoveUnselectedFile: 'false'
+    };
+    const context = loadFilterService({savedQueue: [job], tasks: {
+        task: {gid: 'task', status: 'removed', bittorrent: {}, files: [
+            {index: '1', length: '200', selected: 'true'}
+        ]}
+    }});
+    context.service.start();
+    context.tick();
+
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.getSavedQueue())), []);
+    assert.strictEqual(context.service.getStatus().filtered, 0);
+    assert.strictEqual(context.service.getStatus().full, 0);
+    assert.strictEqual(context.service.getStatus().fallback, 0);
+    assert.strictEqual(context.notifications.length, 0);
+});
+
+test('terminal non-BT remote torrent root settles as non-applicable', function () {
+    const context = loadFilterService({tasks: {
+        root: {gid: 'root', status: 'complete', files: [
+            {index: '1', length: '200', selected: 'true'}
+        ]}
+    }});
+    context.service.enqueue('root', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'remote-torrent'
+    });
+    context.service.start();
+
+    for (let i = 0; i < 3; i++) {
+        context.tick();
+    }
+
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.getSavedQueue())), []);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(context.service.getStatus().filtered, 0);
+    assert.strictEqual(context.service.getStatus().full, 0);
+    assert.strictEqual(context.service.getStatus().fallback, 0);
+    assert.strictEqual(context.service.getStatus().total, 0);
+    assert.strictEqual(context.notifications.length, 0);
+});
+
 test('restoration reconciliation preserves a present falsy cleanup value', function () {
     const job = {
         rpcIdentity: 'rpc-a', rootGid: 'task', childGid: '', thresholdBytes: 100,
@@ -1809,8 +1960,13 @@ test('an unresolved missing root remains queued after another job completes', fu
     context.tick();
     context.tick();
 
-    assert.strictEqual(context.getSavedQueue().length, 1);
-    assert.strictEqual(context.getSavedQueue()[0].rootGid, 'deleted');
+    assert.strictEqual(context.getSavedQueue().length, 2);
+    assert(context.getSavedQueue().some(function (job) {
+        return job.rootGid === 'deleted' && job.stage === 'waiting-metadata';
+    }));
+    assert(context.getSavedQueue().some(function (job) {
+        return job.rootGid === 'completed' && job.stage === 'completed-full';
+    }));
     assert.strictEqual(context.service.getStatus().type, 'waiting');
     assert.strictEqual(context.service.getStatus().textKey, 'format.bt-file-filter.waiting');
     assert.strictEqual(context.service.getStatus().processed, 1);
@@ -1838,6 +1994,14 @@ test('renders the remembered filter and global toolbar status', function () {
     assert(language.includes("'format.bt-file-filter.resuming'"));
     assert(read('src/langs/zh_Hans.txt').includes('format.bt-file-filter.compact=过滤 {{count}}'));
     assert(read('src/langs/zh_Hant.txt').includes('format.bt-file-filter.compact=篩選 {{count}}'));
+});
+
+test('compact filter status reports an outcome appropriate to each terminal state', function () {
+    const index = read('src/index.html');
+
+    assert(index.includes("btFileFilterStatus.type === 'warning' ? btFileFilterStatus.fallback"));
+    assert(index.includes("btFileFilterStatus.type === 'complete' ? (btFileFilterStatus.filtered + btFileFilterStatus.full)"));
+    assert(index.includes('btFileFilterStatus.waiting || (btFileFilterStatus.total - btFileFilterStatus.processed)'));
 });
 
 test('scopes tablet search hiding to active filter controls or status', function () {

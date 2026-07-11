@@ -7,7 +7,8 @@
         var allowedSourceTypes = ['magnet', 'remote-torrent', 'torrent'];
         var allowedStages = [
             'waiting-metadata', 'waiting-files', 'applying-filter', 'restoring-full',
-            'starting-filtered', 'starting-full', 'starting-fallback'
+            'starting-filtered', 'starting-full', 'starting-fallback',
+            'completed-filtered', 'completed-full', 'completed-fallback'
         ];
         var missingRootScanLimit = 3;
 
@@ -182,17 +183,34 @@
             ariaNgStorageService.set(storageKey, jobs);
         };
 
+        var isTerminalJob = function (job) {
+            return job.stage.indexOf('completed-') === 0;
+        };
+
         var getCurrentRpcIdentity = function () {
             return ariaNgSettingService.getCurrentRpcIdentity();
         };
 
-        var getCurrentJobs = function () {
+        var getCurrentRecords = function () {
             var rpcIdentity = getCurrentRpcIdentity();
-            var currentJobs = [];
+            var currentRecords = [];
 
             for (var i = 0; i < jobs.length; i++) {
                 if (jobs[i].rpcIdentity === rpcIdentity) {
-                    currentJobs.push(jobs[i]);
+                    currentRecords.push(jobs[i]);
+                }
+            }
+
+            return currentRecords;
+        };
+
+        var getCurrentJobs = function () {
+            var currentRecords = getCurrentRecords();
+            var currentJobs = [];
+
+            for (var i = 0; i < currentRecords.length; i++) {
+                if (!isTerminalJob(currentRecords[i])) {
+                    currentJobs.push(currentRecords[i]);
                 }
             }
 
@@ -267,13 +285,22 @@
             }
         };
 
-        var resetAggregate = function (total) {
+        var resetAggregate = function () {
+            var currentRecords = getCurrentRecords();
             pollCursor = 0;
-            aggregate.total = total;
+            aggregate.total = currentRecords.length;
             aggregate.processed = 0;
             aggregate.filtered = 0;
             aggregate.full = 0;
             aggregate.fallback = 0;
+
+            for (var i = 0; i < currentRecords.length; i++) {
+                if (isTerminalJob(currentRecords[i])) {
+                    var outcome = currentRecords[i].stage.substring('completed-'.length);
+                    aggregate.processed++;
+                    aggregate[outcome]++;
+                }
+            }
         };
 
         var synchronizeRpcIdentity = function () {
@@ -283,10 +310,14 @@
             }
 
             activeRpcIdentity = rpcIdentity;
+            resetAggregate();
             var currentJobCount = getCurrentJobs().length;
-            resetAggregate(currentJobCount);
             if (currentJobCount < 1) {
-                setIdleStatus();
+                if (aggregate.processed > 0) {
+                    showOutcomeSummary();
+                } else {
+                    setIdleStatus();
+                }
             }
             return true;
         };
@@ -379,6 +410,21 @@
             });
         };
 
+        var clearCompletedOutcomes = function () {
+            var rpcIdentity = getCurrentRpcIdentity();
+            var changed = false;
+
+            for (var i = jobs.length - 1; i >= 0; i--) {
+                if (jobs[i].rpcIdentity === rpcIdentity && isTerminalJob(jobs[i])) {
+                    jobs.splice(i, 1);
+                    changed = true;
+                }
+            }
+            if (changed) {
+                saveJobs();
+            }
+        };
+
         var showOutcomeSummary = function () {
             if (aggregate.fallback > 0) {
                 setVisibleStatus('warning', 'format.bt-file-filter.fallback', {count: aggregate.fallback});
@@ -391,6 +437,7 @@
                 });
                 autoHideStatus(5000);
             }
+            clearCompletedOutcomes();
         };
 
         var completeJob = function (job, outcome, rpcIdentity) {
@@ -399,7 +446,8 @@
                 return;
             }
 
-            removeJob(job);
+            job.stage = 'completed-' + outcome;
+            touchAndSave(job);
             aggregate.processed++;
             aggregate[outcome]++;
 
@@ -447,6 +495,10 @@
             }
 
             var outcome = job.stage.substring('starting-'.length);
+            if (task.status === 'removed') {
+                removeDeletedJob(job, rpcIdentity);
+                return;
+            }
             if (task.status !== 'paused') {
                 completeJob(job, outcome, rpcIdentity);
                 return;
@@ -598,11 +650,7 @@
         };
 
         var settleAbsentMetadataChild = function (job, rpcIdentity, terminalStatus) {
-            if (terminalStatus === 'complete') {
-                completeJob(job, 'full', rpcIdentity);
-            } else {
-                removeDeletedJob(job, rpcIdentity);
-            }
+            removeDeletedJob(job, rpcIdentity);
         };
 
         var recoverMetadataChild = function (job, rpcIdentity, terminalStatus) {
@@ -781,7 +829,7 @@
 
             if (pollingPromise) {
                 if (currentCount < 1) {
-                    resetAggregate(1);
+                    resetAggregate();
                 } else {
                     aggregate.total++;
                 }
@@ -796,13 +844,15 @@
 
             var currentJobs = getCurrentJobs();
             activeRpcIdentity = getCurrentRpcIdentity();
-            resetAggregate(currentJobs.length);
+            resetAggregate();
             if (currentJobs.length > 0) {
                 if (restoredQueue) {
                     setVisibleStatus('resuming', 'format.bt-file-filter.resuming', {count: currentJobs.length});
                 } else {
                     updateActiveStatus();
                 }
+            } else if (aggregate.processed > 0) {
+                showOutcomeSummary();
             }
             restoredQueue = false;
             pollingPromise = $interval(tick, 1000);
