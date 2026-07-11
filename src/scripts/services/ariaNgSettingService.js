@@ -697,11 +697,20 @@
                 var optionKey = this.getTaskListDisplayOrderKey(taskListPageType);
                 setOption(optionKey, value);
             },
-            getShowFileListInDownloadingPage: function () {
-                return !!getOption('showFileListInDownloadingPage');
+            getShowFileListInTaskListPage: function () {
+                var options = getOptions();
+
+                if (angular.isUndefined(options.showFileListInTaskListPage)) {
+                    options.showFileListInTaskListPage = angular.isDefined(options.showFileListInDownloadingPage)
+                        ? !!options.showFileListInDownloadingPage
+                        : !!ariaNgDefaultOptions.showFileListInTaskListPage;
+                    setOptions(options);
+                }
+
+                return !!options.showFileListInTaskListPage;
             },
-            setShowFileListInDownloadingPage: function (value) {
-                setOption('showFileListInDownloadingPage', !!value);
+            setShowFileListInTaskListPage: function (value) {
+                setOption('showFileListInTaskListPage', !!value);
             },
             getFileListDisplayOrder: function () {
                 var value = getOption('fileListDisplayOrder');

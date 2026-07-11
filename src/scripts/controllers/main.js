@@ -420,19 +420,19 @@
             return orderType.equals(targetType);
         };
 
-        $scope.isDownloadingPage = function () {
-            return $location.path() === '/downloading';
+        $scope.isTaskListPage = function () {
+            return getTaskListPageType() !== '';
         };
 
-        $scope.isDownloadingFileListEnabled = function () {
-            return ariaNgSettingService.getShowFileListInDownloadingPage();
+        $scope.isTaskListFileListEnabled = function () {
+            return ariaNgSettingService.getShowFileListInTaskListPage();
         };
 
-        $scope.toggleDownloadingFileList = function () {
-            var enabled = !ariaNgSettingService.getShowFileListInDownloadingPage();
+        $scope.toggleTaskListFileList = function () {
+            var enabled = !ariaNgSettingService.getShowFileListInTaskListPage();
 
-            ariaNgSettingService.setShowFileListInDownloadingPage(enabled);
-            $rootScope.$broadcast('download-file-list-mode.changed', enabled);
+            ariaNgSettingService.setShowFileListInTaskListPage(enabled);
+            $rootScope.$broadcast('task-list-file-list-mode.changed', enabled);
         };
 
         $scope.showQuickSettingDialog = function (type, title) {

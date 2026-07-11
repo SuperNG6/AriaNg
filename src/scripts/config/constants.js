@@ -53,7 +53,7 @@
         showPiecesInfoInTaskDetailPage: 'le10240',
         afterRetryingTask: 'task-list-downloading',
         taskListIndependentDisplayOrder: false,
-        showFileListInDownloadingPage: false,
+        showFileListInTaskListPage: false,
         displayOrder: 'default:asc',
         waitingTaskListPageDisplayOrder: 'default:asc',
         stoppedTaskListPageDisplayOrder: 'default:asc',

@@ -168,8 +168,8 @@
                             <i class="fa fa-question-circle-o"></i>
                         </a>
                     </li>
-                    <li ng-if="isDownloadingPage()" ng-class="{'active': isDownloadingFileListEnabled()}">
-                        <a class="toolbar" title="{{'Files' | translate}}" ng-click="toggleDownloadingFileList()">
+                    <li ng-if="isTaskListPage()" ng-class="{'active': isTaskListFileListEnabled()}">
+                        <a class="toolbar" title="{{'Files' | translate}}" ng-click="toggleTaskListFileList()">
                             <i class="fa fa-list-ul"></i>
                             <span translate>Files</span>
                         </a>
