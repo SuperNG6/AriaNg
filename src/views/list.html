@@ -39,6 +39,7 @@
         </div>
         <div class="task-table-body" ng-class="{'draggable': isSupportDragTask()}" dragula="'task-list'" dragula-model="taskContext.list">
             <div class="row pointer-cursor" ng-repeat="task in taskContext.list | filter: filterTask | taskOrderBy: getOrderType()"
+                 ng-class="{'has-downloading-file-list': showDownloadingFileList() && task.files && task.files.length > 0}"
                  data-gid="{{task.gid}}" data-selected="{{!!taskContext.selected[task.gid]}}" data-toggle="context" data-target="#task-table-contextmenu"
                  ng-click="taskContext.selected[task.gid] = !taskContext.selected[task.gid]">
                 <div class="col-md-8 col-sm-7 col-xs-12">
@@ -85,7 +86,7 @@
                 </div>
                 <div class="col-xs-12 downloading-file-list" ng-if="showDownloadingFileList() && task.files && task.files.length > 0"
                      ng-click="$event.stopPropagation()">
-                    <div class="task-table">
+                    <div class="task-table downloading-file-panel">
                         <div class="task-table-title">
                             <div class="row">
                                 <div class="col-sm-8">

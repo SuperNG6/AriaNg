@@ -138,28 +138,62 @@
     color: #d8d8d8;
 }
 
+.task-table > .task-table-body > div.row.has-downloading-file-list {
+    padding-bottom: 12px;
+}
+
 .task-table .downloading-file-list {
     cursor: default;
     margin-top: 8px;
-    padding-left: 30px;
-    padding-right: 30px;
+    padding-left: 15px;
+    padding-right: 15px;
 }
 
-.task-table .downloading-file-list > .task-table {
+.task-table .downloading-file-panel {
+    box-sizing: border-box;
     margin-left: 0;
     margin-right: 0;
-    border-top: 1px solid #ddd;
+    overflow: hidden;
+    border: 1px solid #d6dfe6;
+    border-left: 3px solid #208fe5;
+    border-radius: 3px;
+    background-color: #fff;
+    box-shadow: 0 1px 2px rgba(32, 52, 68, 0.05);
 }
 
-.task-table .downloading-file-list .task-table-body > .row {
+.task-table .downloading-file-panel > .task-table-title {
+    padding: 6px 15px;
+    border-bottom: 1px solid #dce4ea;
+    background-color: #eef4f8;
+}
+
+.task-table .downloading-file-panel > .task-table-body {
+    padding-left: 15px;
+    padding-right: 15px;
+}
+
+.task-table .downloading-file-panel > .task-table-body > .row {
     padding-top: 6px;
     padding-bottom: 6px;
+    border-color: #e6ebef;
+}
+
+.task-table .downloading-file-panel > .task-table-body > .row:first-child {
+    border-top: 0;
+}
+
+.task-table .downloading-file-panel .checkbox {
+    opacity: 0.72;
+}
+
+.task-table .downloading-file-panel .checkbox label {
+    cursor: default;
 }
 
 @media (max-width: 767px) {
     .task-table .downloading-file-list {
-        padding-left: 15px;
-        padding-right: 15px;
+        padding-left: 5px;
+        padding-right: 5px;
     }
 
     .task-table .downloading-file-list .task-size {

@@ -394,8 +394,35 @@
     color: #eee;
 }
 
-.theme-dark.skin-aria-ng .task-table .downloading-file-list > .task-table {
-    border-color: #333;
+.theme-dark.skin-aria-ng .task-table > .task-table-body > div.row.has-downloading-file-list:hover {
+    background-color: #1a1a1a;
+}
+
+.theme-dark.skin-aria-ng .task-table > .task-table-body > div.row.has-downloading-file-list:nth-of-type(odd):hover {
+    background-color: #262626;
+}
+
+.theme-dark.skin-aria-ng .task-table .downloading-file-panel {
+    border-color: #3b4650;
+    border-left-color: #208fe5;
+    background-color: #1d2226;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.theme-dark.skin-aria-ng .task-table .downloading-file-panel > .task-table-title {
+    border-color: #3b4650;
+    background-color: #242d34;
+}
+
+.theme-dark.skin-aria-ng .task-table .downloading-file-panel > .task-table-body > div.row,
+.theme-dark.skin-aria-ng .task-table .downloading-file-panel > .task-table-body > div.row:nth-of-type(odd) {
+    border-color: #303840;
+    background-color: #1d2226;
+}
+
+.theme-dark.skin-aria-ng .task-table .downloading-file-panel > .task-table-body > div.row:hover,
+.theme-dark.skin-aria-ng .task-table .downloading-file-panel > .task-table-body > div.row:nth-of-type(odd):hover {
+    background-color: #26313a;
 }
 
 /* settings-table */
