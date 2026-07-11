@@ -83,7 +83,7 @@
                         <i class="fa fa-angle-right"></i>
                     </a>
                 </div>
-                <div class="col-xs-12 downloading-file-list" ng-if="showDownloadingFileList() && task.files"
+                <div class="col-xs-12 downloading-file-list" ng-if="showDownloadingFileList() && task.files && task.files.length > 0"
                      ng-click="$event.stopPropagation()">
                     <div class="task-table">
                         <div class="task-table-title">
