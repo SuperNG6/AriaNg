@@ -68,8 +68,8 @@
                 return;
             }
 
-            var showFileList = $scope.showDownloadingFileList();
-            var requestWholeInfo = needRequestWholeInfo || showFileList;
+            var showFileList = $scope.showTaskListFileList();
+            var requestWholeInfo = needRequestWholeInfo || (showFileList && location === 'downloading');
             var modeGeneration = downloadTaskModeGeneration;
             var requestId = ++downloadTaskRequestId;
 
@@ -86,15 +86,8 @@
                     return;
                 }
 
-                showFileList = $scope.showDownloadingFileList();
+                showFileList = $scope.showTaskListFileList();
                 latestAppliedDownloadTaskRequestId = requestId;
-
-                if (showFileList && !response.context.requestWholeInfo) {
-                    needRequestWholeInfo = true;
-                    downloadTaskModeGeneration++;
-                    refreshDownloadTask(true);
-                    return;
-                }
 
                 var isRequestWholeInfo = response.context.requestWholeInfo;
                 var taskList = response.data;
@@ -119,10 +112,7 @@
                 }
 
                 if ($rootScope.taskContext.list && $rootScope.taskContext.list.length > 0) {
-                    if (!showFileList) {
-                        removeVirtualFileNodes($rootScope.taskContext.list);
-                    }
-
+                    removeVirtualFileNodes($rootScope.taskContext.list);
                     aria2TaskService.processDownloadTasks($rootScope.taskContext.list, showFileList);
 
                     if (!isRequestWholeInfo) {
@@ -154,11 +144,11 @@
             return ariaNgSettingService.getDisplayOrder(location);
         };
 
-        $scope.showDownloadingFileList = function () {
-            return location === 'downloading' && ariaNgSettingService.getShowFileListInDownloadingPage();
+        $scope.showTaskListFileList = function () {
+            return ariaNgSettingService.getShowFileListInTaskListPage();
         };
 
-        $scope.changeDownloadingFileListDisplayOrder = function (task, type, autoSetReverse) {
+        $scope.changeTaskListFileListDisplayOrder = function (task, type, autoSetReverse) {
             if (task && task.multiDir) {
                 return;
             }
@@ -173,22 +163,22 @@
             ariaNgSettingService.setFileListDisplayOrder(newType.getValue());
         };
 
-        $scope.isSetDownloadingFileListDisplayOrder = function (type) {
+        $scope.isSetTaskListFileListDisplayOrder = function (type) {
             var orderType = ariaNgCommonService.parseOrderType(ariaNgSettingService.getFileListDisplayOrder());
             var targetType = ariaNgCommonService.parseOrderType(type);
 
             return orderType.equals(targetType);
         };
 
-        $scope.getDownloadingFileListOrderType = function (task) {
+        $scope.getTaskListFileListOrderType = function (task) {
             return task && task.multiDir ? null : ariaNgSettingService.getFileListDisplayOrder();
         };
 
-        $scope.isDownloadingFileDirCollapsed = function (task, nodePath) {
+        $scope.isTaskListFileDirCollapsed = function (task, nodePath) {
             return !!getCollapsedFileDirs(task)[nodePath];
         };
 
-        $scope.collapseDownloadingFileDir = function (task, dirNode, newValue, forceRecurse) {
+        $scope.collapseTaskListFileDir = function (task, dirNode, newValue, forceRecurse) {
             var taskCollapsedDirs = getCollapsedFileDirs(task);
             var nodePath = dirNode.nodePath;
 
@@ -198,7 +188,7 @@
 
             if (newValue || forceRecurse) {
                 for (var i = 0; i < dirNode.subDirs.length; i++) {
-                    $scope.collapseDownloadingFileDir(task, dirNode.subDirs[i], newValue);
+                    $scope.collapseTaskListFileDir(task, dirNode.subDirs[i], newValue);
                 }
             }
 
@@ -242,11 +232,7 @@
             }, true);
         });
 
-        $scope.$on('download-file-list-mode.changed', function (event, enabled) {
-            if (location !== 'downloading') {
-                return;
-            }
-
+        $scope.$on('task-list-file-list-mode.changed', function (event, enabled) {
             downloadTaskModeGeneration++;
             needRequestWholeInfo = !!enabled;
             $rootScope.loadPromise = refreshDownloadTask(false);
