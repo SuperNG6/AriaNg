@@ -321,6 +321,310 @@ const loadFilterService = function (options) {
     };
 };
 
+const angularStub = {
+    module: function () {},
+    isDefined: function (value) { return typeof value !== 'undefined'; },
+    copy: function (value) {
+        return JSON.parse(JSON.stringify(value));
+    },
+    element: function () { return {}; }
+};
+
+const loadNewTaskController = function (options) {
+    options = options || {};
+    let controllerDefinition;
+    const uriTasks = [];
+    const torrentCalls = [];
+    const metalinkCalls = [];
+    const enqueued = [];
+    const paths = [];
+    const module = {
+        controller: function (name, definition) {
+            controllerDefinition = definition;
+            return module;
+        }
+    };
+    const angular = Object.assign({}, angularStub, {
+        module: function () { return module; }
+    });
+
+    vm.runInNewContext(read('src/scripts/controllers/new.js'), {angular: angular});
+
+    const scope = {
+        getBtFileFilterIntent: function () {
+            return options.filterIntent || {enabled: false, thresholdBytes: 104857600};
+        },
+        btFileFilterContext: options.btFileFilterContext,
+        isBtFileFilterValid: options.isBtFileFilterValid || function () { return true; },
+        newTaskForm: {$valid: true}
+    };
+    const rootScope = {swipeActions: {}};
+    const filterService = {
+        isBtMetadataUrl: function (url) {
+            return /^magnet:/i.test(url) || /\.torrent(?:$|[?#])/i.test(url);
+        },
+        enqueue: function (gid, intent) {
+            enqueued.push({gid: gid, intent: intent});
+        }
+    };
+    const taskService = {
+        newUriTasks: function (tasks, pauseOnAdded, callback) {
+            tasks.forEach(function (task) { uriTasks.push(task); });
+            if (options.uriResponse) {
+                callback(options.uriResponse(tasks));
+            }
+            return 'uri-promise';
+        },
+        newTorrentTask: function (task, pauseOnAdded, callback) {
+            torrentCalls.push({task: task, pauseOnAdded: pauseOnAdded});
+            if (options.torrentResponse) {
+                callback(options.torrentResponse);
+            }
+            return 'torrent-promise';
+        },
+        newMetalinkTask: function (task, pauseOnAdded, callback) {
+            metalinkCalls.push({task: task, pauseOnAdded: pauseOnAdded});
+            return 'metalink-promise';
+        }
+    };
+    const dependencies = {
+        '$rootScope': rootScope,
+        '$scope': scope,
+        '$location': {
+            search: function () { return {}; },
+            path: function (value) { if (value) { paths.push(value); } return paths[paths.length - 1] || '/new'; }
+        },
+        '$timeout': function () {},
+        'ariaNgCommonService': {
+            parseUrlsFromOriginInput: function (value) { return value.split(/\r?\n/); },
+            showError: function () {}
+        },
+        'ariaNgLogService': {error: function () {}},
+        'ariaNgKeyboardService': {
+            isCtrlEnterPressed: function () { return true; }
+        },
+        'ariaNgFileService': {},
+        'ariaNgSettingService': {
+            getAfterCreatingNewTask: function () { return 'task-list'; },
+            getKeyboardShortcuts: function () { return !!options.keyboardShortcuts; }
+        },
+        'ariaNgBtFileFilterService': filterService,
+        'aria2TaskService': taskService,
+        'aria2SettingService': {
+            getNewTaskOptionKeys: function () { return []; },
+            getSpecifiedOptions: function () { return {}; }
+        }
+    };
+    const names = controllerDefinition.slice(0, -1);
+    controllerDefinition[controllerDefinition.length - 1].apply(null, names.map(function (name) {
+        return dependencies[name];
+    }));
+    scope.context.urls = options.urls || '';
+    scope.context.options = options.taskOptions || {};
+    if (options.taskType) {
+        scope.context.taskType = options.taskType;
+        scope.context.uploadFile = {base64Content: 'torrent-content'};
+    }
+
+    return {
+        scope: scope,
+        uriTasks: uriTasks,
+        torrentCalls: torrentCalls,
+        metalinkCalls: metalinkCalls,
+        enqueued: enqueued,
+        paths: paths
+    };
+};
+
+const loadMainController = function (options) {
+    options = options || {};
+    let controllerDefinition;
+    let globalStatCallback;
+    let startCount = 0;
+    const status = {visible: false};
+    const module = {
+        controller: function (name, definition) {
+            controllerDefinition = definition;
+            return module;
+        }
+    };
+
+    vm.runInNewContext(read('src/scripts/controllers/main.js'), {
+        angular: {module: function () { return module; }}
+    });
+
+    const scope = {$on: function () {}};
+    const rootScope = {taskContext: {getSelectedTaskIds: function () { return []; }}};
+    const noop = function () {};
+    const settingDefaults = {
+        getBrowserNotification: function () { return false; },
+        getGlobalStatRefreshInterval: function () { return 0; },
+        getTitleRefreshInterval: function () { return 0; },
+        getAllRpcSettings: function () { return []; },
+        isCurrentRpcUseWebSocket: function () { return false; },
+        getBtFileFilterEnabled: function () { return true; },
+        getBtFileFilterMinSizeMb: function () { return 100; }
+    };
+    const settingService = new Proxy(settingDefaults, {
+        get: function (target, property) { return target[property] || noop; }
+    });
+    const dependencies = {
+        '$rootScope': rootScope,
+        '$scope': scope,
+        '$route': {reload: noop},
+        '$window': {location: {reload: noop}},
+        '$location': {path: function () { return options.path || '/new'; }},
+        '$document': [{title: ''}],
+        '$interval': Object.assign(function () {}, {cancel: noop}),
+        'clipboard': {},
+        'aria2RpcErrors': {Unauthorized: {message: 'Unauthorized'}},
+        'ariaNgCommonService': {},
+        'ariaNgVersionService': {getBuildVersion: function () { return 'test'; }},
+        'ariaNgNotificationService': {},
+        'ariaNgSettingService': settingService,
+        'ariaNgMonitorService': {getGlobalStatsData: function () { return []; }, recordGlobalStat: noop},
+        'ariaNgTitleService': {getFinalTitleByGlobalStat: function () { return 'title'; }},
+        'ariaNgBtFileFilterService': {
+            getStatus: function () { return status; },
+            start: function () { startCount++; }
+        },
+        'aria2TaskService': {},
+        'aria2SettingService': {
+            getGlobalStat: function (callback) { globalStatCallback = callback; return 'global-stat-promise'; }
+        }
+    };
+    const names = controllerDefinition.slice(0, -1);
+    controllerDefinition[controllerDefinition.length - 1].apply(null, names.map(function (name) {
+        return dependencies[name];
+    }));
+
+    return {
+        scope: scope,
+        status: status,
+        respondGlobalStat: function (response) { globalStatCallback(response); },
+        getStartCount: function () { return startCount; }
+    };
+};
+
+test('adds magnets for metadata discovery while preserving Download Later for ordinary URLs', function () {
+    const context = loadNewTaskController({
+        urls: 'magnet:?xt=urn:btih:abc\nhttps://host/file.iso',
+        filterIntent: {enabled: true, thresholdBytes: 104857600}
+    });
+
+    context.scope.startDownload(true);
+
+    assert.strictEqual(context.uriTasks[0].options['pause-metadata'], 'true');
+    assert.strictEqual(context.uriTasks[0].pauseOnAdded, false);
+    assert.strictEqual(context.uriTasks[0].btFileFilterCandidate, true);
+    assert.strictEqual(context.uriTasks[1].pauseOnAdded, true);
+    assert.strictEqual(context.uriTasks[1].options['pause-metadata'], undefined);
+});
+
+test('enqueues only successful URI metadata candidates with the snapshotted intent', function () {
+    const intent = {enabled: true, thresholdBytes: 209715200};
+    const context = loadNewTaskController({
+        urls: 'magnet:?xt=urn:btih:abc\nhttps://host/file.iso\nhttps://host/file.torrent\nhttps://host/failed.torrent',
+        filterIntent: intent,
+        uriResponse: function (tasks) {
+            intent.thresholdBytes = 1;
+            return {hasSuccess: true, results: [
+                {success: true, data: 'magnet-gid', context: {task: tasks[0]}},
+                {success: true, data: 'direct-gid', context: {task: tasks[1]}},
+                {success: true, data: 'torrent-gid', context: {task: tasks[2]}},
+                {success: false, data: {message: 'failed'}, context: {task: tasks[3]}}
+            ]};
+        }
+    });
+
+    context.scope.startDownload(false);
+
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.enqueued)), [{gid: 'magnet-gid', intent: {
+        thresholdBytes: 209715200,
+        startAfterFilter: true,
+        sourceType: 'magnet'
+    }}, {gid: 'torrent-gid', intent: {
+        thresholdBytes: 209715200,
+        startAfterFilter: true,
+        sourceType: 'remote-torrent'
+    }}]);
+});
+
+test('forces local torrents paused while filtering and enqueues the returned GID', function () {
+    const context = loadNewTaskController({
+        taskType: 'torrent',
+        filterIntent: {enabled: true, thresholdBytes: 104857600},
+        torrentResponse: {success: true, data: 'torrent-gid'}
+    });
+
+    context.scope.startDownload(false);
+
+    assert.strictEqual(context.torrentCalls[0].pauseOnAdded, true);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.enqueued)), [{gid: 'torrent-gid', intent: {
+        thresholdBytes: 104857600,
+        startAfterFilter: true,
+        sourceType: 'torrent'
+    }}]);
+});
+
+test('leaves disabled URI, torrent, and Metalink submissions unchanged', function () {
+    const urls = loadNewTaskController({urls: 'magnet:?xt=urn:btih:abc', filterIntent: {enabled: false}});
+    urls.scope.startDownload(true);
+    assert.strictEqual(urls.uriTasks[0].pauseOnAdded, true);
+    assert.strictEqual(urls.uriTasks[0].options['pause-metadata'], undefined);
+    assert.deepStrictEqual(urls.enqueued, []);
+
+    const torrent = loadNewTaskController({taskType: 'torrent', filterIntent: {enabled: false}});
+    torrent.scope.startDownload(false);
+    assert.strictEqual(torrent.torrentCalls[0].pauseOnAdded, false);
+    assert.deepStrictEqual(torrent.enqueued, []);
+
+    const metalink = loadNewTaskController({taskType: 'metalink', filterIntent: {enabled: true}});
+    metalink.scope.startDownload(true);
+    assert.strictEqual(metalink.metalinkCalls[0].pauseOnAdded, true);
+    assert.deepStrictEqual(metalink.enqueued, []);
+});
+
+test('rejects a new task when the enabled header filter threshold is invalid', function () {
+    const context = loadNewTaskController({
+        btFileFilterContext: {enabled: true, minSizeMb: 'bad'},
+        isBtFileFilterValid: function () { return false; }
+    });
+
+    assert.strictEqual(context.scope.isNewTaskValid(), false);
+});
+
+test('does not submit an invalid enabled filter with Ctrl+Enter', function () {
+    const context = loadNewTaskController({
+        urls: 'https://host/file.iso',
+        keyboardShortcuts: true,
+        btFileFilterContext: {enabled: true, minSizeMb: 'bad'},
+        isBtFileFilterValid: function () { return false; }
+    });
+
+    context.scope.urlTextboxKeyDown({preventDefault: function () {}});
+
+    assert.strictEqual(context.uriTasks.length, 0);
+});
+
+test('MainController exposes stable filter status and starts after successful global stat', function () {
+    const context = loadMainController();
+
+    assert.strictEqual(context.scope.btFileFilterStatus, context.status);
+    assert.strictEqual(context.scope.isNewTaskPage(), true);
+    assert.strictEqual(context.getStartCount(), 0);
+    context.respondGlobalStat({success: false, data: {message: 'offline'}});
+    assert.strictEqual(context.getStartCount(), 0);
+    context.respondGlobalStat({success: true, data: {downloadSpeed: '0'}});
+    assert.strictEqual(context.getStartCount(), 1);
+    context.respondGlobalStat({success: true, data: {downloadSpeed: '0'}});
+    assert.strictEqual(context.getStartCount(), 1);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.scope.getBtFileFilterIntent())), {
+        enabled: true,
+        thresholdBytes: 104857600
+    });
+});
+
 test('defines safe small-file filter defaults and queue storage key', function () {
     const constants = loadConstants();
 

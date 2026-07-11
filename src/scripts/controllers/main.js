@@ -1,9 +1,10 @@
 (function () {
     'use strict';
 
-    angular.module('ariaNg').controller('MainController', ['$rootScope', '$scope', '$route', '$window', '$location', '$document', '$interval', 'clipboard', 'aria2RpcErrors', 'ariaNgCommonService', 'ariaNgVersionService', 'ariaNgNotificationService', 'ariaNgSettingService', 'ariaNgMonitorService', 'ariaNgTitleService', 'aria2TaskService', 'aria2SettingService', function ($rootScope, $scope, $route, $window, $location, $document, $interval, clipboard, aria2RpcErrors, ariaNgCommonService, ariaNgVersionService, ariaNgNotificationService, ariaNgSettingService, ariaNgMonitorService, ariaNgTitleService, aria2TaskService, aria2SettingService) {
+    angular.module('ariaNg').controller('MainController', ['$rootScope', '$scope', '$route', '$window', '$location', '$document', '$interval', 'clipboard', 'aria2RpcErrors', 'ariaNgCommonService', 'ariaNgVersionService', 'ariaNgNotificationService', 'ariaNgSettingService', 'ariaNgMonitorService', 'ariaNgTitleService', 'ariaNgBtFileFilterService', 'aria2TaskService', 'aria2SettingService', function ($rootScope, $scope, $route, $window, $location, $document, $interval, clipboard, aria2RpcErrors, ariaNgCommonService, ariaNgVersionService, ariaNgNotificationService, ariaNgSettingService, ariaNgMonitorService, ariaNgTitleService, ariaNgBtFileFilterService, aria2TaskService, aria2SettingService) {
         var pageTitleRefreshPromise = null;
         var globalStatRefreshPromise = null;
+        var btFileFilterStarted = false;
 
         var getTaskListPageType = function () {
             var location = $location.path().substring(1);
@@ -34,6 +35,10 @@
                 if (response.success) {
                     $scope.globalStat = response.data;
                     ariaNgMonitorService.recordGlobalStat(response.data);
+                    if (!btFileFilterStarted) {
+                        btFileFilterStarted = true;
+                        ariaNgBtFileFilterService.start();
+                    }
                 }
 
                 if (callback) {
@@ -66,6 +71,35 @@
         $scope.globalStatusContext = {
             isEnabled: ariaNgSettingService.getGlobalStatRefreshInterval() > 0,
             data: ariaNgMonitorService.getGlobalStatsData()
+        };
+
+        $scope.btFileFilterContext = {
+            enabled: ariaNgSettingService.getBtFileFilterEnabled(),
+            minSizeMb: ariaNgSettingService.getBtFileFilterMinSizeMb()
+        };
+        $scope.btFileFilterStatus = ariaNgBtFileFilterService.getStatus();
+
+        $scope.isNewTaskPage = function () {
+            return $location.path() === '/new';
+        };
+
+        $scope.isBtFileFilterValid = function () {
+            var value = Number($scope.btFileFilterContext.minSizeMb);
+            return value === Math.floor(value) && value >= 1 && value <= 102400;
+        };
+
+        $scope.saveBtFileFilterSetting = function () {
+            ariaNgSettingService.setBtFileFilterEnabled($scope.btFileFilterContext.enabled);
+            if ($scope.isBtFileFilterValid()) {
+                ariaNgSettingService.setBtFileFilterMinSizeMb($scope.btFileFilterContext.minSizeMb);
+            }
+        };
+
+        $scope.getBtFileFilterIntent = function () {
+            return {
+                enabled: $scope.btFileFilterContext.enabled && $scope.isBtFileFilterValid(),
+                thresholdBytes: Number($scope.btFileFilterContext.minSizeMb) * 1024 * 1024
+            };
         };
 
         $scope.enableDebugMode = function () {

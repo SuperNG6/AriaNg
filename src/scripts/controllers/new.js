@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    angular.module('ariaNg').controller('NewTaskController', ['$rootScope', '$scope', '$location', '$timeout', 'ariaNgCommonService', 'ariaNgLogService', 'ariaNgKeyboardService', 'ariaNgFileService', 'ariaNgSettingService', 'aria2TaskService', 'aria2SettingService', function ($rootScope, $scope, $location, $timeout, ariaNgCommonService, ariaNgLogService, ariaNgKeyboardService, ariaNgFileService, ariaNgSettingService, aria2TaskService, aria2SettingService) {
+    angular.module('ariaNg').controller('NewTaskController', ['$rootScope', '$scope', '$location', '$timeout', 'ariaNgCommonService', 'ariaNgLogService', 'ariaNgKeyboardService', 'ariaNgFileService', 'ariaNgSettingService', 'ariaNgBtFileFilterService', 'aria2TaskService', 'aria2SettingService', function ($rootScope, $scope, $location, $timeout, ariaNgCommonService, ariaNgLogService, ariaNgKeyboardService, ariaNgFileService, ariaNgSettingService, ariaNgBtFileFilterService, aria2TaskService, aria2SettingService) {
         var tabStatusItems = [
             {
                 name: 'links',
@@ -43,7 +43,7 @@
             aria2SettingService.addSettingHistory('dir', options.dir);
         };
 
-        var getDownloadTasksByLinks = function (options) {
+        var getDownloadTasksByLinks = function (options, pauseOnAdded, filterIntent) {
             var urls = ariaNgCommonService.parseUrlsFromOriginInput($scope.context.urls);
             var tasks = [];
 
@@ -56,18 +56,31 @@
                     continue;
                 }
 
-                tasks.push({
-                    urls: [urls[i].trim()],
-                    options: options
-                });
+                var url = urls[i].trim();
+                var task = {
+                    urls: [url],
+                    options: angular.copy(options)
+                };
+
+                if (filterIntent && filterIntent.enabled && ariaNgBtFileFilterService.isBtMetadataUrl(url)) {
+                    task.options['pause-metadata'] = 'true';
+                    task.options.pause = 'false';
+                    task.pauseOnAdded = false;
+                    task.btFileFilterCandidate = true;
+                    task.btFileFilterSourceType = /^magnet:/i.test(url) ? 'magnet' : 'remote-torrent';
+                } else if (angular.isDefined(pauseOnAdded)) {
+                    task.pauseOnAdded = !!pauseOnAdded;
+                }
+
+                tasks.push(task);
             }
 
             return tasks;
         };
 
-        var downloadByLinks = function (pauseOnAdded, responseCallback) {
+        var downloadByLinks = function (pauseOnAdded, filterIntent, responseCallback) {
             var options = angular.copy($scope.context.options);
-            var tasks = getDownloadTasksByLinks(options);
+            var tasks = getDownloadTasksByLinks(options, pauseOnAdded, filterIntent);
 
             saveDownloadPath(options);
 
@@ -201,6 +214,11 @@
         };
 
         $scope.isNewTaskValid = function () {
+            if ($scope.btFileFilterContext && $scope.btFileFilterContext.enabled &&
+                !$scope.isBtFileFilterValid()) {
+                return false;
+            }
+
             if (!$scope.context.uploadFile) {
                 return $scope.newTaskForm.$valid;
             }
@@ -209,9 +227,34 @@
         };
 
         $scope.startDownload = function (pauseOnAdded) {
+            var requestedPauseOnAdded = !!pauseOnAdded;
+            var filterIntent = angular.copy($scope.getBtFileFilterIntent());
             var responseCallback = function (response) {
                 if (!response.hasSuccess && !response.success) {
                     return;
+                }
+
+                if (filterIntent.enabled) {
+                    if (response.results) {
+                        for (var i = 0; i < response.results.length; i++) {
+                            var result = response.results[i];
+                            var resultTask = result.context && result.context.task;
+
+                            if (result.success && result.data && resultTask && resultTask.btFileFilterCandidate) {
+                                ariaNgBtFileFilterService.enqueue(result.data, {
+                                    thresholdBytes: filterIntent.thresholdBytes,
+                                    startAfterFilter: !requestedPauseOnAdded,
+                                    sourceType: resultTask.btFileFilterSourceType
+                                });
+                            }
+                        }
+                    } else if ($scope.context.taskType === 'torrent' && response.success && response.data) {
+                        ariaNgBtFileFilterService.enqueue(response.data, {
+                            thresholdBytes: filterIntent.thresholdBytes,
+                            startAfterFilter: !requestedPauseOnAdded,
+                            sourceType: 'torrent'
+                        });
+                    }
                 }
 
                 var firstTask = null;
@@ -234,9 +277,9 @@
             };
 
             if ($scope.context.taskType === 'urls') {
-                $rootScope.loadPromise = downloadByLinks(pauseOnAdded, responseCallback);
+                $rootScope.loadPromise = downloadByLinks(pauseOnAdded, filterIntent, responseCallback);
             } else if ($scope.context.taskType === 'torrent') {
-                $rootScope.loadPromise = downloadByTorrent(pauseOnAdded, responseCallback);
+                $rootScope.loadPromise = downloadByTorrent(filterIntent.enabled ? true : pauseOnAdded, responseCallback);
             } else if ($scope.context.taskType === 'metalink') {
                 $rootScope.loadPromise = downloadByMetalink(pauseOnAdded, responseCallback);
             }
@@ -264,7 +307,7 @@
                 return;
             }
 
-            if (ariaNgKeyboardService.isCtrlEnterPressed(event) && $scope.newTaskForm.$valid) {
+            if (ariaNgKeyboardService.isCtrlEnterPressed(event) && $scope.isNewTaskValid()) {
                 if (event.preventDefault) {
                     event.preventDefault();
                 }
