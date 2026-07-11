@@ -22,7 +22,9 @@
             if (/^magnet:\?/i.test(normalized)) {
                 return true;
             }
-            return /^https?:\/\//i.test(normalized) && /\.torrent(?:[?#]|$)/i.test(normalized);
+
+            var urlWithoutQueryOrFragment = normalized.split(/[?#]/)[0];
+            return /^https?:\/\/[^/?#]+\/.*\.torrent$/i.test(urlWithoutQueryOrFragment);
         };
 
         var planFiles = function (files, thresholdBytes) {

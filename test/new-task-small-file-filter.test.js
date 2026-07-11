@@ -276,6 +276,13 @@ test('recognizes supported BT metadata inputs only', function () {
     assert.strictEqual(service.isBtMetadataUrl('ftp://host/file.torrent'), false);
 });
 
+test('requires the HTTP URL path to end in torrent', function () {
+    const service = loadFilterService().service;
+
+    assert.strictEqual(service.isBtMetadataUrl('https://host/file.iso?next=.torrent?token=1'), false);
+    assert.strictEqual(service.isBtMetadataUrl('https://host/file.iso#fake.torrent'), false);
+});
+
 test('filters only mixed-size file lists with strict threshold semantics', function () {
     const service = loadFilterService().service;
     const mb = 1024 * 1024;
