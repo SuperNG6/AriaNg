@@ -498,21 +498,21 @@
     background-color: #f5f5f5;
 }
 
-.skin-aria-ng .task-table > .task-table-body > div.row.has-downloading-file-list:hover {
+.skin-aria-ng .task-table > .task-table-body > div.row.has-task-list-file-list:hover {
     background-color: #fff;
 }
 
-.skin-aria-ng .task-table > .task-table-body > div.row.has-downloading-file-list:nth-of-type(odd):hover {
+.skin-aria-ng .task-table > .task-table-body > div.row.has-task-list-file-list:nth-of-type(odd):hover {
     background-color: #f9f9f9;
 }
 
-.skin-aria-ng .task-table .downloading-file-panel > .task-table-body > div.row,
-.skin-aria-ng .task-table .downloading-file-panel > .task-table-body > div.row:nth-of-type(odd) {
+.skin-aria-ng .task-table .task-list-file-panel > .task-table-body > div.row,
+.skin-aria-ng .task-table .task-list-file-panel > .task-table-body > div.row:nth-of-type(odd) {
     background-color: #fff;
 }
 
-.skin-aria-ng .task-table .downloading-file-panel > .task-table-body > div.row:hover,
-.skin-aria-ng .task-table .downloading-file-panel > .task-table-body > div.row:nth-of-type(odd):hover {
+.skin-aria-ng .task-table .task-list-file-panel > .task-table-body > div.row:hover,
+.skin-aria-ng .task-table .task-list-file-panel > .task-table-body > div.row:nth-of-type(odd):hover {
     background-color: #f6fafc;
 }
 
