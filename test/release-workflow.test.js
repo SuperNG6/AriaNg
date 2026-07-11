@@ -43,5 +43,6 @@ assert(workflow.includes('github.event_name == \'workflow_dispatch\''), 'manual 
 assert(!workflow.includes('--clobber'), 'release assets must never be overwritten');
 assert(!workflow.includes('--draft'), 'release must not be a draft');
 assert(!workflow.includes('--prerelease'), 'release must not be a prerelease');
+assert(!workflow.includes('git ls-remote --exit-code'), 'a network error must not be mistaken for a missing tag');
 
 console.log('PASS release workflow contract');

@@ -1,0 +1,171 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release (without a v prefix)
+        required: true
+        default: '1.3.15'
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out release commit
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Validate version and release state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          fi
+
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          LOCK_VERSION="$(node -p "require('./package-lock.json').version")"
+
+          if [[ "$PACKAGE_VERSION" != "$VERSION" || "$LOCK_VERSION" != "$VERSION" ]]; then
+            echo "Release version $VERSION does not match package.json ($PACKAGE_VERSION) and package-lock.json ($LOCK_VERSION)." >&2
+            exit 1
+          fi
+
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists." >&2
+            exit 1
+          fi
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            REMOTE_TAG="$(git ls-remote --tags origin "refs/tags/$VERSION")"
+
+            if [[ -n "$REMOTE_TAG" ]]; then
+              echo "Tag $VERSION already exists; refusing to move or overwrite it." >&2
+              exit 1
+            fi
+          else
+            TAG_COMMIT="$(git rev-list -n 1 "$VERSION")"
+
+            if [[ "$TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+              echo "Tag $VERSION points to $TAG_COMMIT instead of $GITHUB_SHA." >&2
+              exit 1
+            fi
+          fi
+
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build standard archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          npx gulp clean build
+          (
+            cd dist
+            zip -qr "../release/AriaNg-${VERSION}.zip" .
+          )
+
+      - name: Build All-In-One archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx gulp clean build-bundle
+          (
+            cd dist
+            zip -qr "../release/AriaNg-${VERSION}-AllInOne.zip" .
+          )
+
+      - name: Validate archives
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          STANDARD="release/AriaNg-${VERSION}.zip"
+          BUNDLE="release/AriaNg-${VERSION}-AllInOne.zip"
+
+          test -s "$STANDARD"
+          test -s "$BUNDLE"
+          unzip -tq "$STANDARD"
+          unzip -tq "$BUNDLE"
+
+          STANDARD_ENTRIES="$(unzip -Z1 "$STANDARD")"
+          for entry in index.html LICENSE css/ js/ fonts/ langs/; do
+            if ! grep -q "^${entry}" <<< "$STANDARD_ENTRIES"; then
+              echo "Standard archive is missing $entry" >&2
+              exit 1
+            fi
+          done
+
+          BUNDLE_ENTRIES="$(unzip -Z1 "$BUNDLE" | sed '/\/$/d' | sort)"
+          EXPECTED_BUNDLE_ENTRIES="$(printf '%s\n' LICENSE index.html | sort)"
+
+          if [[ "$BUNDLE_ENTRIES" != "$EXPECTED_BUNDLE_ENTRIES" ]]; then
+            echo "Unexpected All-In-One archive contents:" >&2
+            printf '%s\n' "$BUNDLE_ENTRIES" >&2
+            exit 1
+          fi
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: AriaNg-${{ env.VERSION }}
+          path: release/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish existing tag
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          gh release create "$VERSION" \
+            "release/AriaNg-${VERSION}.zip" \
+            "release/AriaNg-${VERSION}-AllInOne.zip" \
+            --verify-tag \
+            --title "AriaNg ${VERSION}" \
+            --generate-notes
+
+      - name: Create tag and publish manual release
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          gh release create "$VERSION" \
+            "release/AriaNg-${VERSION}.zip" \
+            "release/AriaNg-${VERSION}-AllInOne.zip" \
+            --target "$GITHUB_SHA" \
+            --title "AriaNg ${VERSION}" \
+            --generate-notes
