@@ -9,6 +9,93 @@ const read = (path) => fs.readFileSync(path, 'utf8');
 const tests = [];
 const test = (name, fn) => tests.push({name, fn});
 
+const loadRootKeyboardContext = function (searchVisible) {
+    let runDefinition;
+    let focusCount = 0;
+    const module = {
+        run: function (definition) {
+            runDefinition = definition;
+            return module;
+        }
+    };
+    const genericElement = {
+        addClass: function () { return genericElement; },
+        attr: function () { return ''; },
+        click: function () { return genericElement; },
+        each: function () { return genericElement; },
+        hasClass: function () { return false; },
+        is: function () { return false; },
+        parent: function () { return genericElement; },
+        prepend: function () { return genericElement; },
+        removeClass: function () { return genericElement; }
+    };
+    const angular = {
+        module: function () { return module; },
+        element: function (selector) {
+            if (selector === '#search-box') {
+                return {
+                    focus: function () { focusCount++; },
+                    is: function (query) {
+                        assert.strictEqual(query, ':visible');
+                        return searchVisible;
+                    }
+                };
+            }
+            return genericElement;
+        },
+        isArray: Array.isArray,
+        isFunction: function (value) { return typeof value === 'function'; },
+        isObject: function (value) { return value !== null && typeof value === 'object'; },
+        isString: function (value) { return typeof value === 'string'; }
+    };
+
+    vm.runInNewContext(read('src/scripts/core/root.js'), {angular: angular});
+
+    const rootScope = {
+        $on: function () {}
+    };
+    const noop = function () {};
+    const dependencies = {
+        '$window': {
+            addEventListener: noop,
+            location: {reload: noop}
+        },
+        '$rootScope': rootScope,
+        '$location': {path: function () { return '/downloading'; }},
+        '$document': {unbind: noop},
+        '$timeout': noop,
+        'ariaNgCommonService': {closeAllDialogs: noop},
+        'ariaNgKeyboardService': {},
+        'ariaNgNotificationService': {},
+        'ariaNgLogService': {info: noop, warn: noop},
+        'ariaNgSettingService': {
+            getBrowserFeatures: function () { return {localStroage: true, cookies: true}; },
+            getTheme: function () { return 'light'; },
+            isBrowserSupportDarkMode: function () { return false; },
+            isBrowserSupportStorage: function () { return true; },
+            onFirstAccess: noop
+        },
+        'aria2TaskService': {
+            onBtTaskCompleted: noop,
+            onConnectionFailed: noop,
+            onConnectionReconnecting: noop,
+            onConnectionSuccess: noop,
+            onConnectionWaitingToReconnect: noop,
+            onFirstSuccess: noop,
+            onTaskCompleted: noop,
+            onTaskErrorOccur: noop
+        }
+    };
+    const names = runDefinition.slice(0, -1);
+    const run = runDefinition[runDefinition.length - 1];
+    run.apply(null, names.map(function (name) { return dependencies[name]; }));
+
+    return {
+        rootScope: rootScope,
+        getFocusCount: function () { return focusCount; }
+    };
+};
+
 const loadConstants = function () {
     const constants = {};
     const module = {
@@ -1326,12 +1413,48 @@ test('renders the remembered filter and global toolbar status', function () {
     assert(read('src/langs/zh_Hant.txt').includes('format.bt-file-filter.compact=篩選 {{count}}'));
 });
 
-test('protects the filter toolbar at tablet widths and keeps invalid borders themed', function () {
+test('scopes tablet search hiding to active filter controls or status', function () {
+    const index = read('src/index.html');
+    const core = read('src/styles/core/core.css');
+    const tabletBreakpoint = core.indexOf('@media (max-width: 1199px)');
+    const globalSearchRule = '.main-header .navbar .navbar-searchbar {\n        display: none;\n    }';
+    const scopedSearchRule = '.main-header .navbar.bt-file-filter-active .navbar-searchbar {';
+
+    assert(index.includes("ng-class=\"{'bt-file-filter-active': isNewTaskPage() || btFileFilterStatus.visible}\""));
+    assert(tabletBreakpoint >= 0);
+    assert.strictEqual(core.indexOf(globalSearchRule, tabletBreakpoint), -1);
+    assert(core.indexOf(scopedSearchRule, tabletBreakpoint) > tabletBreakpoint);
+});
+
+test('keeps inactive task search compact at the narrow tablet boundary', function () {
+    const core = read('src/styles/core/core.css');
+    const narrowTabletBreakpoint = core.indexOf('@media (min-width: 768px) and (max-width: 899px)');
+    const compactSearchRule = core.indexOf('.main-header .navbar:not(.bt-file-filter-active) .navbar-searchbar .form-control {',
+        narrowTabletBreakpoint);
+
+    assert(narrowTabletBreakpoint >= 0);
+    assert(compactSearchRule > narrowTabletBreakpoint);
+});
+
+test('find shortcut only consumes the event while search is visible', function () {
+    const visible = loadRootKeyboardContext(true);
+    const visibleEvent = {prevented: false, preventDefault: function () { this.prevented = true; }};
+    assert.strictEqual(visible.rootScope.keydownActions.find(visibleEvent), false);
+    assert.strictEqual(visibleEvent.prevented, true);
+    assert.strictEqual(visible.getFocusCount(), 1);
+
+    const hidden = loadRootKeyboardContext(false);
+    const hiddenEvent = {prevented: false, preventDefault: function () { this.prevented = true; }};
+    assert.strictEqual(hidden.rootScope.keydownActions.find(hiddenEvent), undefined);
+    assert.strictEqual(hiddenEvent.prevented, false);
+    assert.strictEqual(hidden.getFocusCount(), 0);
+});
+
+test('keeps the filter label compact and invalid borders themed', function () {
     const core = read('src/styles/core/core.css');
     const light = read('src/styles/theme/default.css');
     const dark = read('src/styles/theme/default-dark.css');
     const tabletBreakpoint = core.indexOf('@media (max-width: 1199px)');
-    const tabletSearchRule = core.indexOf('.main-header .navbar .navbar-searchbar {\n        display: none;\n    }', tabletBreakpoint);
     const tabletLabelRule = core.indexOf('.main-header .bt-file-filter-label {', tabletBreakpoint);
     const lightNeutral = light.indexOf('.skin-aria-ng .main-header .bt-file-filter-size {');
     const lightInvalid = light.indexOf('.skin-aria-ng .main-header .bt-file-filter-size.has-error {');
@@ -1341,7 +1464,6 @@ test('protects the filter toolbar at tablet widths and keeps invalid borders the
     const darkInvalidFocus = dark.indexOf('.theme-dark.skin-aria-ng .main-header .bt-file-filter-size.has-error:focus {');
 
     assert(tabletBreakpoint >= 0);
-    assert(tabletSearchRule > tabletBreakpoint);
     assert(tabletLabelRule > tabletBreakpoint);
     assert(lightInvalid > lightNeutral);
     assert(lightInvalidFocus > lightInvalid);

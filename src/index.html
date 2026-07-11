@@ -68,7 +68,8 @@
             </div>
         </div>
 
-        <nav class="navbar navbar-static-top" role="navigation">
+        <nav class="navbar navbar-static-top" role="navigation"
+             ng-class="{'bt-file-filter-active': isNewTaskPage() || btFileFilterStatus.visible}">
             <div class="navbar-toolbar">
                 <ul class="nav navbar-nav">
                     <li>

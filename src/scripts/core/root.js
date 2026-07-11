@@ -354,6 +354,10 @@
 
         $rootScope.keydownActions = {
             find: function (event) {
+                if (!angular.element('#search-box').is(':visible')) {
+                    return;
+                }
+
                 if (event.preventDefault) {
                     event.preventDefault();
                 }
