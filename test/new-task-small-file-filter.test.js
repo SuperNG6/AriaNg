@@ -1037,7 +1037,7 @@ test('recovers five paused magnet children when aria2 no longer retains metadata
     assert.strictEqual(context.service.getStatus().filtered, 5);
 });
 
-test('keeps a recovered Download Later magnet child paused after filtering', function () {
+test('keeps a recovered Download Later remote-torrent child paused after filtering', function () {
     const child = {
         gid: 'child', following: 'root', status: 'paused', bittorrent: {}, files: [
             {index: '1', length: '1', selected: 'true'},
@@ -1057,7 +1057,7 @@ test('keeps a recovered Download Later magnet child paused after filtering', fun
     context.service.enqueue('root', {
         thresholdBytes: 104857600,
         startAfterFilter: false,
-        sourceType: 'magnet'
+        sourceType: 'remote-torrent'
     });
     context.service.start();
     context.tickUntilIdle();
@@ -1190,6 +1190,21 @@ test('a missing metadata root without a child remains queued and non-mutating', 
     assert.deepStrictEqual(context.changedOptions, []);
     assert.deepStrictEqual(context.startedGids, []);
     assert.strictEqual(context.notifications.length, 0);
+});
+
+test('a deleted local torrent is removed from the queue without a warning', function () {
+    const context = loadFilterService({statusResponses: [{
+        success: false, data: {message: 'No such download for GID#deleted'}
+    }]});
+    context.service.enqueue('deleted', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'});
+    context.service.start();
+    context.tick();
+
+    assert.strictEqual(context.getSavedQueue().length, 0);
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(context.notifications.length, 0);
+    assert.strictEqual(context.service.getStatus().visible, false);
 });
 
 test('jobs for another RPC identity remain stored and unprocessed', function () {
