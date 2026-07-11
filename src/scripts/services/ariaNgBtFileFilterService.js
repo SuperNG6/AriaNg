@@ -167,8 +167,20 @@
             }
 
             activeRpcIdentity = rpcIdentity;
-            resetAggregate(getCurrentJobs().length);
+            var currentJobCount = getCurrentJobs().length;
+            resetAggregate(currentJobCount);
+            if (currentJobCount < 1) {
+                setIdleStatus();
+            }
             return true;
+        };
+
+        var isJobOnCurrentRpc = function (job, rpcIdentity) {
+            return job.rpcIdentity === rpcIdentity && getCurrentRpcIdentity() === rpcIdentity && jobs.indexOf(job) >= 0;
+        };
+
+        var getOptionValue = function (options, key, defaultValue) {
+            return typeof options[key] === 'undefined' ? defaultValue : String(options[key]);
         };
 
         var touchAndSave = function (job) {
@@ -220,13 +232,22 @@
             }
         };
 
-        var removeDeletedJob = function (job) {
+        var removeDeletedJob = function (job, rpcIdentity) {
+            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                finishTick();
+                return;
+            }
+
             removeJob(job);
             if (aggregate.total > aggregate.processed) {
                 aggregate.total--;
             }
-            if (getCurrentJobs().length < 1 && aggregate.processed < 1) {
-                setIdleStatus();
+            if (getCurrentJobs().length < 1) {
+                if (aggregate.processed > 0) {
+                    showOutcomeSummary();
+                } else {
+                    setIdleStatus();
+                }
             }
             finishTick();
         };
@@ -252,12 +273,13 @@
             }
         };
 
-        var completeJob = function (job, outcome) {
-            removeJob(job);
-            if (job.rpcIdentity !== getCurrentRpcIdentity()) {
+        var completeJob = function (job, outcome, rpcIdentity) {
+            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
                 finishTick();
                 return;
             }
+
+            removeJob(job);
             aggregate.processed++;
             aggregate[outcome]++;
 
@@ -273,42 +295,67 @@
             finishTick();
         };
 
-        var startOrComplete = function (job, gid, outcome) {
+        var startOrComplete = function (job, gid, outcome, rpcIdentity) {
+            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                finishTick();
+                return;
+            }
+
             if (!job.startAfterFilter) {
-                completeJob(job, outcome);
+                completeJob(job, outcome, rpcIdentity);
                 return;
             }
 
             job.stage = 'starting-' + outcome;
             touchAndSave(job);
             aria2TaskService.startTasks([gid], function (response) {
+                if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                    finishTick();
+                    return;
+                }
+
                 if (response && response.success) {
-                    completeJob(job, outcome);
+                    completeJob(job, outcome, rpcIdentity);
                 } else if (isNotFoundResponse(response)) {
-                    removeDeletedJob(job);
+                    removeDeletedJob(job, rpcIdentity);
                 } else {
                     finishTick();
                 }
             }, true);
         };
 
-        var processStartingJob = function (job, task) {
-            var outcome = job.stage.substring('starting-'.length);
-            if (task.status !== 'paused') {
-                completeJob(job, outcome);
+        var processStartingJob = function (job, task, rpcIdentity) {
+            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                finishTick();
                 return;
             }
 
-            startOrComplete(job, task.gid, outcome);
+            var outcome = job.stage.substring('starting-'.length);
+            if (task.status !== 'paused') {
+                completeJob(job, outcome, rpcIdentity);
+                return;
+            }
+
+            startOrComplete(job, task.gid, outcome, rpcIdentity);
         };
 
-        var processRestoration = function (job, task, plan) {
+        var processRestoration = function (job, task, plan, rpcIdentity) {
+            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                finishTick();
+                return;
+            }
+
             var allIndexes = job.allIndexes || plan.allIndexes;
             var fullSelection = allIndexes.join(',');
             aria2TaskService.getTaskOptions(task.gid, function (optionsResponse) {
+                if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                    finishTick();
+                    return;
+                }
+
                 if (!optionsResponse || !optionsResponse.success) {
                     if (isNotFoundResponse(optionsResponse)) {
-                        removeDeletedJob(job);
+                        removeDeletedJob(job, rpcIdentity);
                     } else {
                         finishTick();
                     }
@@ -317,8 +364,8 @@
 
                 var currentOptions = optionsResponse.data || {};
                 if (job.restoreAttempted && sameIndexes(task.files, allIndexes) &&
-                    String(currentOptions['bt-remove-unselected-file'] || 'false') === job.originalRemoveUnselectedFile) {
-                    startOrComplete(job, task.gid, 'fallback');
+                    getOptionValue(currentOptions, 'bt-remove-unselected-file', 'false') === job.originalRemoveUnselectedFile) {
+                    startOrComplete(job, task.gid, 'fallback', rpcIdentity);
                     return;
                 }
 
@@ -328,10 +375,15 @@
                     'select-file': fullSelection,
                     'bt-remove-unselected-file': job.originalRemoveUnselectedFile
                 }, function (response) {
+                    if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                        finishTick();
+                        return;
+                    }
+
                     if (response && response.success) {
-                        startOrComplete(job, task.gid, 'fallback');
+                        startOrComplete(job, task.gid, 'fallback', rpcIdentity);
                     } else if (isNotFoundResponse(response)) {
-                        removeDeletedJob(job);
+                        removeDeletedJob(job, rpcIdentity);
                     } else {
                         finishTick();
                     }
@@ -339,11 +391,21 @@
             }, true);
         };
 
-        var processMixedTask = function (job, task, plan) {
+        var processMixedTask = function (job, task, plan, rpcIdentity) {
+            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                finishTick();
+                return;
+            }
+
             aria2TaskService.getTaskOptions(task.gid, function (optionsResponse) {
+                if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                    finishTick();
+                    return;
+                }
+
                 if (!optionsResponse || !optionsResponse.success) {
                     if (isNotFoundResponse(optionsResponse)) {
-                        removeDeletedJob(job);
+                        removeDeletedJob(job, rpcIdentity);
                     } else {
                         finishTick();
                     }
@@ -352,15 +414,14 @@
 
                 var currentOptions = optionsResponse.data || {};
                 if (job.originalRemoveUnselectedFile === null || typeof job.originalRemoveUnselectedFile === 'undefined') {
-                    job.originalRemoveUnselectedFile = typeof currentOptions['bt-remove-unselected-file'] === 'undefined' ?
-                        'false' : String(currentOptions['bt-remove-unselected-file']);
+                    job.originalRemoveUnselectedFile = getOptionValue(currentOptions, 'bt-remove-unselected-file', 'false');
                 }
                 job.selectedIndexes = plan.selectedIndexes;
                 job.allIndexes = plan.allIndexes;
 
                 if (job.stage === 'applying-filter' && sameIndexes(task.files, plan.selectedIndexes) &&
                     String(currentOptions['bt-remove-unselected-file']) === 'true') {
-                    startOrComplete(job, task.gid, 'filtered');
+                    startOrComplete(job, task.gid, 'filtered', rpcIdentity);
                     return;
                 }
 
@@ -370,10 +431,15 @@
                     'select-file': plan.selectedIndexes.join(','),
                     'bt-remove-unselected-file': 'true'
                 }, function (response) {
+                    if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                        finishTick();
+                        return;
+                    }
+
                     if (response && response.success) {
-                        startOrComplete(job, task.gid, 'filtered');
+                        startOrComplete(job, task.gid, 'filtered', rpcIdentity);
                     } else if (isNotFoundResponse(response)) {
-                        removeDeletedJob(job);
+                        removeDeletedJob(job, rpcIdentity);
                     } else {
                         job.retryCount++;
                         if (job.retryCount >= 3) {
@@ -387,21 +453,31 @@
             }, true);
         };
 
-        var processBtTask = function (job, task) {
+        var processBtTask = function (job, task, rpcIdentity) {
+            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                finishTick();
+                return;
+            }
+
             var plan = planFiles(task.files, job.thresholdBytes);
             if (job.stage === 'restoring-full') {
-                processRestoration(job, task, plan);
+                processRestoration(job, task, plan, rpcIdentity);
             } else if (plan.mode === 'filter') {
-                processMixedTask(job, task, plan);
+                processMixedTask(job, task, plan, rpcIdentity);
             } else {
-                startOrComplete(job, task.gid, 'full');
+                startOrComplete(job, task.gid, 'full', rpcIdentity);
             }
         };
 
-        var processTaskResponse = function (job, response) {
+        var processTaskResponse = function (job, response, rpcIdentity) {
+            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                finishTick();
+                return;
+            }
+
             if (!response || !response.success) {
                 if (isNotFoundResponse(response)) {
-                    removeDeletedJob(job);
+                    removeDeletedJob(job, rpcIdentity);
                 } else {
                     finishTick();
                 }
@@ -410,9 +486,9 @@
 
             var task = response.data;
             if (job.stage.indexOf('starting-') === 0) {
-                processStartingJob(job, task);
+                processStartingJob(job, task, rpcIdentity);
             } else if (task.bittorrent && task.files && task.files.length > 0) {
-                processBtTask(job, task);
+                processBtTask(job, task, rpcIdentity);
             } else if (task.followedBy && task.followedBy.length > 0) {
                 job.childGid = task.followedBy[0];
                 job.stage = 'waiting-files';
@@ -443,8 +519,9 @@
             });
             var job = currentJobs[pollCursor % currentJobs.length];
             pollCursor++;
+            var rpcIdentity = getCurrentRpcIdentity();
             aria2TaskService.getTaskStatus(job.childGid || job.rootGid, function (response) {
-                processTaskResponse(job, response);
+                processTaskResponse(job, response, rpcIdentity);
             }, true);
         };
 

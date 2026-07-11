@@ -155,6 +155,12 @@ const loadFilterService = function (options) {
     const notifications = [];
     const statusGids = [];
     const pendingStatusCallbacks = [];
+    const pendingOptionCallbacks = [];
+    const pendingChangeCallbacks = [];
+    const pendingStartCallbacks = [];
+    const optionRpcIdentities = [];
+    const changeRpcIdentities = [];
+    const startRpcIdentities = [];
     const statusResponses = (options.statusResponses || []).slice();
     const optionResponses = (options.optionResponses || []).slice();
     const changeResponses = (options.changeResponses || []).slice();
@@ -220,12 +226,19 @@ const loadFilterService = function (options) {
                 }
             },
             getTaskOptions: function (gid, callback) {
-                callback(optionResponses.length > 0 ? optionResponses.shift() : {
+                optionRpcIdentities.push(rpcIdentity);
+                const response = optionResponses.length > 0 ? optionResponses.shift() : {
                     success: true,
                     data: taskOptions[gid] || taskOptions
-                });
+                };
+                if (options.deferOptions) {
+                    pendingOptionCallbacks.push({callback: callback, response: response});
+                } else {
+                    callback(response);
+                }
             },
             changeTaskOptions: function (gid, rpcOptions, callback) {
+                changeRpcIdentities.push(rpcIdentity);
                 changedOptions.push({gid: gid, options: Object.assign({}, rpcOptions)});
                 const response = changeResponses.length > 0 ? changeResponses.shift() : {success: true, data: 'OK'};
                 const callNumber = changedOptions.length;
@@ -242,11 +255,21 @@ const loadFilterService = function (options) {
                         targetOptions['select-file'] = options.normalizedSelectFile;
                     }
                 }
-                callback(response);
+                if (options.deferChange) {
+                    pendingChangeCallbacks.push({callback: callback, response: response});
+                } else {
+                    callback(response);
+                }
             },
             startTasks: function (gids, callback) {
+                startRpcIdentities.push(rpcIdentity);
                 startedGids.push.apply(startedGids, gids);
-                callback(startResponses.length > 0 ? startResponses.shift() : {success: true, data: 'OK'});
+                const response = startResponses.length > 0 ? startResponses.shift() : {success: true, data: 'OK'};
+                if (options.deferStart) {
+                    pendingStartCallbacks.push({callback: callback, response: response});
+                } else {
+                    callback(response);
+                }
             }
         }
     };
@@ -262,12 +285,27 @@ const loadFilterService = function (options) {
         startedGids: startedGids,
         notifications: notifications,
         statusGids: statusGids,
+        optionRpcIdentities: optionRpcIdentities,
+        changeRpcIdentities: changeRpcIdentities,
+        startRpcIdentities: startRpcIdentities,
         intervals: intervals,
         timeouts: timeouts,
         setRpcIdentity: function (value) { rpcIdentity = value; },
         resolveStatus: function (response) {
             const pending = pendingStatusCallbacks.shift();
             pending.callback(response || {success: true, data: tasks[pending.gid]});
+        },
+        resolveOptions: function (response) {
+            const pending = pendingOptionCallbacks.shift();
+            pending.callback(response || pending.response);
+        },
+        resolveChange: function (response) {
+            const pending = pendingChangeCallbacks.shift();
+            pending.callback(response || pending.response);
+        },
+        resolveStart: function (response) {
+            const pending = pendingStartCallbacks.shift();
+            pending.callback(response || pending.response);
         },
         getSavedQueue: function () { return savedQueue || []; },
         tick: function () {
@@ -789,6 +827,140 @@ test('a metadata-waiting job does not block later ready jobs', function () {
     assert.deepStrictEqual(context.statusGids, ['waiting', 'ready']);
     assert.strictEqual(context.getSavedQueue().length, 1);
     assert.strictEqual(context.getSavedQueue()[0].rootGid, 'waiting');
+});
+
+test('RPC switch after tellStatus does not continue the A job against B', function () {
+    const context = loadFilterService({rpcIdentity: 'rpc-a', deferStatus: true, tasks: {
+        task: {gid: 'task', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]}
+    }, taskOptions: {'bt-remove-unselected-file': 'false'}});
+    context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'});
+    context.service.start();
+    context.tick();
+
+    context.setRpcIdentity('rpc-b');
+    context.resolveStatus();
+
+    assert.deepStrictEqual(context.optionRpcIdentities, []);
+    assert.deepStrictEqual(context.changeRpcIdentities, []);
+    assert.deepStrictEqual(context.startRpcIdentities, []);
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    assert.strictEqual(context.getSavedQueue()[0].stage, 'waiting-metadata');
+});
+
+test('RPC switch after getOption does not change the A job against B', function () {
+    const context = loadFilterService({rpcIdentity: 'rpc-a', deferOptions: true, tasks: {
+        task: {gid: 'task', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]}
+    }, taskOptions: {'bt-remove-unselected-file': 'false'}});
+    context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'});
+    context.service.start();
+    context.tick();
+
+    context.setRpcIdentity('rpc-b');
+    context.resolveOptions();
+
+    assert.deepStrictEqual(context.optionRpcIdentities, ['rpc-a']);
+    assert.deepStrictEqual(context.changeRpcIdentities, []);
+    assert.deepStrictEqual(context.startRpcIdentities, []);
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    assert.strictEqual(context.getSavedQueue()[0].stage, 'waiting-metadata');
+});
+
+test('RPC switch after changeOption does not start or remove the A job against B', function () {
+    const context = loadFilterService({rpcIdentity: 'rpc-a', deferChange: true, tasks: {
+        task: {gid: 'task', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]}
+    }, taskOptions: {'bt-remove-unselected-file': 'false'}});
+    context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'});
+    context.service.start();
+    context.tick();
+
+    context.setRpcIdentity('rpc-b');
+    context.resolveChange();
+
+    assert.deepStrictEqual(context.changeRpcIdentities, ['rpc-a']);
+    assert.deepStrictEqual(context.startRpcIdentities, []);
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    assert.strictEqual(context.getSavedQueue()[0].stage, 'applying-filter');
+});
+
+test('RPC switch after unpause does not remove the A job from B callback context', function () {
+    const context = loadFilterService({rpcIdentity: 'rpc-a', deferStart: true, tasks: {
+        task: {gid: 'task', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '200', selected: 'true'}
+        ]}
+    }});
+    context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'});
+    context.service.start();
+    context.tick();
+
+    context.setRpcIdentity('rpc-b');
+    context.resolveStart();
+
+    assert.deepStrictEqual(context.startRpcIdentities, ['rpc-a']);
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    assert.strictEqual(context.getSavedQueue()[0].stage, 'starting-full');
+});
+
+test('restoration reconciliation preserves a present falsy cleanup value', function () {
+    const job = {
+        rpcIdentity: 'rpc-a', rootGid: 'task', childGid: '', thresholdBytes: 100,
+        startAfterFilter: false, sourceType: 'torrent', stage: 'restoring-full',
+        retryCount: 3, originalRemoveUnselectedFile: '', restoreAttempted: true,
+        allIndexes: [1, 2], selectedIndexes: [2]
+    };
+    const context = loadFilterService({rpcIdentity: 'rpc-a', savedQueue: [job], tasks: {
+        task: {gid: 'task', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]}
+    }, taskOptions: {'select-file': '1,2', 'bt-remove-unselected-file': ''}});
+    context.service.start();
+    context.tick();
+
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.strictEqual(context.getSavedQueue().length, 0);
+    assert.strictEqual(context.service.getStatus().fallback, 1);
+});
+
+test('switching to an RPC identity without jobs clears the previous toolbar status', function () {
+    const context = loadFilterService({rpcIdentity: 'rpc-a'});
+    context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'magnet'});
+    context.service.start();
+    assert.strictEqual(context.service.getStatus().visible, true);
+
+    context.setRpcIdentity('rpc-b');
+    context.tick();
+
+    assert.strictEqual(context.service.getStatus().visible, false);
+    assert.strictEqual(context.service.getStatus().type, 'idle');
+    assert.strictEqual(context.service.getStatus().total, 0);
+});
+
+test('deleting the last queued job after prior completion settles the complete summary', function () {
+    const context = loadFilterService({tasks: {
+        completed: {gid: 'completed', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '200', selected: 'true'}
+        ]}
+    }});
+    context.service.enqueue('completed', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'torrent'});
+    context.service.enqueue('deleted', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'magnet'});
+    context.service.start();
+    context.tick();
+    context.tick();
+
+    assert.strictEqual(context.getSavedQueue().length, 0);
+    assert.strictEqual(context.service.getStatus().type, 'complete');
+    assert.strictEqual(context.service.getStatus().textKey, 'format.bt-file-filter.complete');
+    assert.strictEqual(context.service.getStatus().processed, 1);
+    assert.strictEqual(context.service.getStatus().total, 1);
 });
 
 let failed = 0;
