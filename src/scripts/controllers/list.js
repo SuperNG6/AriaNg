@@ -6,6 +6,7 @@
         var downloadTaskRefreshPromise = null;
         var pauseDownloadTaskRefresh = false;
         var needRequestWholeInfo = true;
+        var latestDownloadTaskRequestId = 0;
 
         var collapsedFileDirs = {};
 
@@ -67,9 +68,10 @@
 
             var showFileList = $scope.showDownloadingFileList();
             var requestWholeInfo = needRequestWholeInfo || showFileList;
+            var requestId = ++latestDownloadTaskRequestId;
 
             return aria2TaskService.getTaskList(location, requestWholeInfo, function (response) {
-                if (pauseDownloadTaskRefresh) {
+                if (pauseDownloadTaskRefresh || requestId !== latestDownloadTaskRequestId) {
                     return;
                 }
 
@@ -236,6 +238,10 @@
         });
 
         $scope.$on('download-file-list-mode.changed', function (event, enabled) {
+            if (location !== 'downloading') {
+                return;
+            }
+
             needRequestWholeInfo = !!enabled;
             $rootScope.loadPromise = refreshDownloadTask(false);
         });
