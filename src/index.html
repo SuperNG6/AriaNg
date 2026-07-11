@@ -168,11 +168,36 @@
                             <i class="fa fa-question-circle-o"></i>
                         </a>
                     </li>
+                    <li class="bt-file-filter-toolbar" ng-if="isNewTaskPage()">
+                        <label class="bt-file-filter-toggle" title="{{'BT file filter cleanup warning' | translate}}">
+                            <input type="checkbox" ng-model="btFileFilterContext.enabled"
+                                   ng-change="saveBtFileFilterSetting()"/>
+                            <span class="bt-file-filter-label" translate>Filter files smaller than</span>
+                        </label>
+                        <input class="form-control bt-file-filter-size" type="number" min="1" max="102400" step="1"
+                               ng-model="btFileFilterContext.minSizeMb" ng-disabled="!btFileFilterContext.enabled"
+                               ng-change="saveBtFileFilterSetting()"
+                               ng-class="{'has-error': btFileFilterContext.enabled && !isBtFileFilterValid()}"
+                               aria-label="{{'Filter files smaller than' | translate}}"
+                               aria-invalid="{{btFileFilterContext.enabled && !isBtFileFilterValid()}}"/>
+                        <span class="bt-file-filter-unit">MB</span>
+                    </li>
                     <li ng-if="isTaskListPage()" ng-class="{'active': isTaskListFileListEnabled()}">
                         <a class="toolbar" title="{{'Files' | translate}}" ng-click="toggleTaskListFileList()">
                             <i class="fa fa-list-ul"></i>
                             <span translate>Files</span>
                         </a>
+                    </li>
+                    <li class="bt-file-filter-status" ng-if="btFileFilterStatus.visible"
+                        ng-class="'status-' + btFileFilterStatus.type"
+                        title="{{btFileFilterStatus.textKey | translate: btFileFilterStatus.textParams}}"
+                        role="status" aria-live="polite" aria-atomic="true">
+                        <i class="fa" aria-hidden="true"
+                           ng-class="{'fa-spinner fa-spin': btFileFilterStatus.type === 'processing' || btFileFilterStatus.type === 'waiting' || btFileFilterStatus.type === 'resuming', 'fa-check-circle': btFileFilterStatus.type === 'complete', 'fa-exclamation-triangle': btFileFilterStatus.type === 'warning'}"></i>
+                        <span class="bt-file-filter-status-full"
+                              ng-bind="btFileFilterStatus.textKey | translate: btFileFilterStatus.textParams"></span>
+                        <span class="bt-file-filter-status-compact"
+                              ng-bind="('format.bt-file-filter.compact' | translate: {count: btFileFilterStatus.waiting || (btFileFilterStatus.total - btFileFilterStatus.processed)})"></span>
                     </li>
                 </ul>
             </div>

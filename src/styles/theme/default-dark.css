@@ -204,6 +204,35 @@
     color: #8f8f8f !important;
 }
 
+.theme-dark.skin-aria-ng .main-header .bt-file-filter-toolbar {
+    color: #ddd;
+    border-left: 1px solid #3b3b3b;
+}
+
+.theme-dark.skin-aria-ng .main-header .bt-file-filter-size {
+    color: #eee;
+    background-color: #252525;
+    border-color: #5b5b5b;
+}
+
+.theme-dark.skin-aria-ng .main-header .bt-file-filter-size:disabled {
+    color: #929292;
+    background-color: #1c1c1c;
+    border-color: #414141;
+}
+
+.theme-dark.skin-aria-ng .main-header .bt-file-filter-status {
+    color: #54a9f5;
+}
+
+.theme-dark.skin-aria-ng .main-header .bt-file-filter-status.status-complete {
+    color: #63c986;
+}
+
+.theme-dark.skin-aria-ng .main-header .bt-file-filter-status.status-warning {
+    color: #f0ad4e;
+}
+
 .theme-dark.skin-aria-ng .main-header .navbar .nav > li.divider {
     border-color: #666;
 }

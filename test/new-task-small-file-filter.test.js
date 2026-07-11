@@ -1303,6 +1303,29 @@ test('deleting the last queued job after prior completion settles the complete s
     assert.strictEqual(context.service.getStatus().total, 1);
 });
 
+test('renders the remembered filter and global toolbar status', function () {
+    const index = read('src/index.html');
+    const styles = read('src/styles/core/core.css') +
+        read('src/styles/theme/default.css') + read('src/styles/theme/default-dark.css');
+    const language = read('src/scripts/config/defaultLanguage.js');
+
+    assert(index.includes('class="bt-file-filter-toolbar" ng-if="isNewTaskPage()"'));
+    assert(index.includes('ng-model="btFileFilterContext.enabled"'));
+    assert(index.includes('ng-model="btFileFilterContext.minSizeMb"'));
+    assert(index.includes('ng-change="saveBtFileFilterSetting()"'));
+    assert(index.includes('bt-file-filter-status'));
+    assert(index.includes('btFileFilterStatus.textKey | translate: btFileFilterStatus.textParams'));
+    assert(index.includes('aria-invalid="{{btFileFilterContext.enabled && !isBtFileFilterValid()}}"'));
+    assert(styles.includes('.bt-file-filter-toolbar'));
+    assert(styles.includes('.bt-file-filter-status'));
+    assert(styles.includes('.bt-file-filter-status-compact'));
+    assert(styles.includes('@media (max-width: 767px)'));
+    assert(language.includes("'Filter files smaller than'"));
+    assert(language.includes("'format.bt-file-filter.resuming'"));
+    assert(read('src/langs/zh_Hans.txt').includes('format.bt-file-filter.compact=过滤 {{count}}'));
+    assert(read('src/langs/zh_Hant.txt').includes('format.bt-file-filter.compact=篩選 {{count}}'));
+});
+
 let failed = 0;
 
 tests.forEach(function (item) {
