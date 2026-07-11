@@ -113,9 +113,9 @@
                                        ng-class="{true: 'fa-plus', false: 'fa-minus'}[isDownloadingFileDirCollapsed(task, file.nodePath)]"
                                        title="{{(isDownloadingFileDirCollapsed(task, file.nodePath) ? 'Expand' : 'Collapse') | translate}}">
                                     </i><div class="checkbox checkbox-primary checkbox-inline">
-                                        <input id="{{'download_node_' + task.gid + '_' + file.nodePath}}" type="checkbox" disabled
+                                        <input id="{{'download_node_' + task.gid + '_' + $index}}" type="checkbox" disabled
                                                ng-model="file.selected" ng-indeterminate="file.partialSelected"/>
-                                        <label for="{{'download_node_' + task.gid + '_' + file.nodePath}}" class="allow-word-break" ng-bind="file.nodeName" title="{{file.nodeName}}"></label>
+                                        <label for="{{'download_node_' + task.gid + '_' + $index}}" class="allow-word-break" ng-bind="file.nodeName" title="{{file.nodeName}}"></label>
                                     </div>
                                 </div>
                                 <div class="col-sm-8" ng-if="!file.isDir" style="{{(task.multiDir ? ('padding-left: ' + (11 + 6 + file.level * 16) + 'px') : '')}}">

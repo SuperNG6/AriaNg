@@ -302,6 +302,7 @@
             getFullTaskParams: function () {
                 var requestParams = this.getBasicTaskParams();
 
+                requestParams.push('dir');
                 requestParams.push('files');
                 requestParams.push('bittorrent');
                 requestParams.push('infoHash');
