@@ -420,6 +420,21 @@
             return orderType.equals(targetType);
         };
 
+        $scope.isDownloadingPage = function () {
+            return $location.path() === '/downloading';
+        };
+
+        $scope.isDownloadingFileListEnabled = function () {
+            return ariaNgSettingService.getShowFileListInDownloadingPage();
+        };
+
+        $scope.toggleDownloadingFileList = function () {
+            var enabled = !ariaNgSettingService.getShowFileListInDownloadingPage();
+
+            ariaNgSettingService.setShowFileListInDownloadingPage(enabled);
+            $rootScope.$broadcast('download-file-list-mode.changed', enabled);
+        };
+
         $scope.showQuickSettingDialog = function (type, title) {
             $scope.quickSettingContext = {
                 type: type,
