@@ -394,6 +394,10 @@
     color: #eee;
 }
 
+.theme-dark.skin-aria-ng .task-table .downloading-file-list > .task-table {
+    border-color: #333;
+}
+
 /* settings-table */
 .theme-dark.skin-aria-ng .settings-table {
     background-color: #1a1a1a;

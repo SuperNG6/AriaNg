@@ -83,6 +83,64 @@
                         <i class="fa fa-angle-right"></i>
                     </a>
                 </div>
+                <div class="col-xs-12 downloading-file-list" ng-if="showDownloadingFileList() && task.files"
+                     ng-click="$event.stopPropagation()">
+                    <div class="task-table">
+                        <div class="task-table-title">
+                            <div class="row">
+                                <div class="col-sm-8">
+                                    <a ng-click="changeDownloadingFileListDisplayOrder(task, 'name:asc', true)" ng-class="{true: 'default-cursor'}[task.multiDir]">
+                                        <span translate>File Name</span><i ng-if="!task.multiDir" class="fa fa-display-order" ng-class="{'fa-sort-asc fa-order-asc': isSetDownloadingFileListDisplayOrder('name:asc'), 'fa-sort-desc fa-order-desc': isSetDownloadingFileListDisplayOrder('name:desc')}"></i>
+                                    </a>
+                                </div>
+                                <div class="col-sm-2">
+                                    <a ng-click="changeDownloadingFileListDisplayOrder(task, 'percent:desc', true)" ng-class="{true: 'default-cursor'}[task.multiDir]">
+                                        <span translate>Progress</span><i ng-if="!task.multiDir" class="fa fa-display-order" ng-class="{'fa-sort-asc fa-order-asc': isSetDownloadingFileListDisplayOrder('percent:asc'), 'fa-sort-desc fa-order-desc': isSetDownloadingFileListDisplayOrder('percent:desc')}"></i>
+                                    </a>
+                                </div>
+                                <div class="col-sm-2">
+                                    <a ng-click="changeDownloadingFileListDisplayOrder(task, 'size:asc', true)" ng-class="{true: 'default-cursor'}[task.multiDir]">
+                                        <span translate>File Size</span><i ng-if="!task.multiDir" class="fa fa-display-order" ng-class="{'fa-sort-asc fa-order-asc': isSetDownloadingFileListDisplayOrder('size:asc'), 'fa-sort-desc fa-order-desc': isSetDownloadingFileListDisplayOrder('size:desc')}"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="task-table-body">
+                            <div class="row" ng-repeat="file in task.files | fileOrderBy: getDownloadingFileListOrderType(task)"
+                                 ng-if="!isDownloadingFileDirCollapsed(task, file.relativePath)">
+                                <div class="col-sm-10" ng-if="file.isDir" style="{{(task.multiDir ? ('padding-left: ' + (file.level * 16) + 'px') : '')}}">
+                                    <i class="icon-dir-expand pointer-cursor fa" ng-click="collapseDownloadingFileDir(task, file)"
+                                       ng-class="{true: 'fa-plus', false: 'fa-minus'}[isDownloadingFileDirCollapsed(task, file.nodePath)]"
+                                       title="{{(isDownloadingFileDirCollapsed(task, file.nodePath) ? 'Expand' : 'Collapse') | translate}}">
+                                    </i><div class="checkbox checkbox-primary checkbox-inline">
+                                        <input id="{{'download_node_' + task.gid + '_' + file.nodePath}}" type="checkbox" disabled
+                                               ng-model="file.selected" ng-indeterminate="file.partialSelected"/>
+                                        <label for="{{'download_node_' + task.gid + '_' + file.nodePath}}" class="allow-word-break" ng-bind="file.nodeName" title="{{file.nodeName}}"></label>
+                                    </div>
+                                </div>
+                                <div class="col-sm-8" ng-if="!file.isDir" style="{{(task.multiDir ? ('padding-left: ' + (11 + 6 + file.level * 16) + 'px') : '')}}">
+                                    <div class="checkbox checkbox-primary">
+                                        <input id="{{'download_file_' + task.gid + '_' + file.index}}" type="checkbox" disabled ng-model="file.selected"/>
+                                        <label for="{{'download_file_' + task.gid + '_' + file.index}}" class="allow-word-break" ng-bind="file.fileName" title="{{file.fileName}}"></label>
+                                    </div>
+                                </div>
+                                <div class="col-sm-2" ng-if="!file.isDir">
+                                    <div class="progress">
+                                        <div class="progress-bar progress-bar-primary" role="progressbar"
+                                             aria-valuenow="{{file.completePercent}}" aria-valuemin="1"
+                                             aria-valuemax="100" ng-style="{ width: file.completePercent + '%' }">
+                                            <span ng-class="{'progress-lower': file.completePercent < 50}"
+                                                  ng-bind="(file.completePercent | percent: 2) + '%'"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-sm-2">
+                                    <span class="task-size" ng-bind="file.length | readableVolume"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
         <div id="task-table-contextmenu">

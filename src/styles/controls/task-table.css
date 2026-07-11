@@ -137,3 +137,32 @@
 .task-table .task-right-arrow i:hover {
     color: #d8d8d8;
 }
+
+.task-table .downloading-file-list {
+    cursor: default;
+    margin-top: 8px;
+    padding-left: 30px;
+    padding-right: 30px;
+}
+
+.task-table .downloading-file-list > .task-table {
+    margin-left: 0;
+    margin-right: 0;
+    border-top: 1px solid #ddd;
+}
+
+.task-table .downloading-file-list .task-table-body > .row {
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+@media (max-width: 767px) {
+    .task-table .downloading-file-list {
+        padding-left: 15px;
+        padding-right: 15px;
+    }
+
+    .task-table .downloading-file-list .task-size {
+        text-align: right;
+    }
+}
