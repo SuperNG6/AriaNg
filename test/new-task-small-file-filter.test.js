@@ -141,6 +141,57 @@ const loadTaskService = function (changeOption) {
     }));
 };
 
+const loadFilterService = function (options) {
+    let factoryDefinition;
+    let savedQueue = options && options.savedQueue;
+    const rpcIdentity = options && options.rpcIdentity || 'http|localhost|6800|jsonrpc';
+    const constants = loadConstants();
+    const module = {
+        factory: function (name, definition) {
+            factoryDefinition = definition;
+            return module;
+        }
+    };
+
+    vm.runInNewContext(read('src/scripts/services/ariaNgBtFileFilterService.js'), {
+        angular: {
+            module: function () {
+                return module;
+            }
+        }
+    });
+
+    const dependencies = {
+        '$interval': function () {},
+        '$timeout': function () {},
+        'ariaNgConstants': constants.ariaNgConstants,
+        'ariaNgStorageService': {
+            get: function () { return savedQueue; },
+            set: function (key, value) {
+                assert.strictEqual(key, constants.ariaNgConstants.btFileFilterQueueStorageKey);
+                savedQueue = value;
+                return true;
+            }
+        },
+        'ariaNgSettingService': {
+            getCurrentRpcIdentity: function () { return rpcIdentity; }
+        },
+        'ariaNgNotificationService': {},
+        'ariaNgLogService': {},
+        'aria2TaskService': {}
+    };
+    const names = factoryDefinition.slice(0, -1);
+    const factory = factoryDefinition[factoryDefinition.length - 1];
+    const service = factory.apply(null, names.map(function (name) {
+        return dependencies[name];
+    }));
+
+    return {
+        service: service,
+        getSavedQueue: function () { return savedQueue; }
+    };
+};
+
 test('defines safe small-file filter defaults and queue storage key', function () {
     const constants = loadConstants();
 
@@ -214,6 +265,79 @@ test('sends multiple task options in one RPC call', function () {
     assert.strictEqual(lastChangeOption.silent, true);
     assert.strictEqual(lastChangeOption.callback, callback);
     assert.strictEqual(result, rpcResult);
+});
+
+test('recognizes supported BT metadata inputs only', function () {
+    const service = loadFilterService().service;
+
+    assert.strictEqual(service.isBtMetadataUrl('magnet:?xt=urn:btih:abc'), true);
+    assert.strictEqual(service.isBtMetadataUrl('https://host/file.torrent?token=1'), true);
+    assert.strictEqual(service.isBtMetadataUrl('https://host/file.iso'), false);
+    assert.strictEqual(service.isBtMetadataUrl('ftp://host/file.torrent'), false);
+});
+
+test('filters only mixed-size file lists with strict threshold semantics', function () {
+    const service = loadFilterService().service;
+    const mb = 1024 * 1024;
+
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(service.planFiles([
+        {index: '1', length: String(99 * mb)},
+        {index: '2', length: String(100 * mb)},
+        {index: '3', length: String(101 * mb)}
+    ], 100 * mb))), {
+        mode: 'filter', selectedIndexes: [2, 3], allIndexes: [1, 2, 3]
+    });
+    assert.strictEqual(service.planFiles([{index: '1', length: '1'}], 100 * mb).mode, 'full');
+    assert.strictEqual(service.planFiles([{index: '1', length: String(101 * mb)}], 100 * mb).mode, 'full');
+});
+
+test('persists immutable jobs under the current RPC identity', function () {
+    const context = loadFilterService({rpcIdentity: 'http|one|6800|jsonrpc'});
+    const intent = {
+        thresholdBytes: 104857600,
+        startAfterFilter: true,
+        sourceType: 'magnet'
+    };
+
+    context.service.enqueue('root-1', intent);
+    intent.thresholdBytes = 1;
+
+    const saved = context.getSavedQueue();
+    assert.strictEqual(saved[0].rpcIdentity, 'http|one|6800|jsonrpc');
+    assert.strictEqual(saved[0].rootGid, 'root-1');
+    assert.strictEqual(saved[0].thresholdBytes, 104857600);
+    assert.strictEqual(saved[0].stage, 'waiting-metadata');
+});
+
+test('rejects duplicate jobs and exposes a stable idle status object', function () {
+    const context = loadFilterService();
+
+    context.service.enqueue('root-1', {
+        thresholdBytes: 104857600,
+        startAfterFilter: false,
+        sourceType: 'torrent'
+    });
+    context.service.enqueue('root-1', {
+        thresholdBytes: 1,
+        startAfterFilter: true,
+        sourceType: 'magnet'
+    });
+
+    assert.strictEqual(context.service.getJobs().length, 1);
+    assert.strictEqual(context.service.getStatus(), context.service.getStatus());
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.service.getStatus())), {
+        visible: false,
+        type: 'idle',
+        total: 0,
+        processed: 0,
+        waiting: 0,
+        filtered: 0,
+        full: 0,
+        fallback: 0,
+        textKey: '',
+        textParams: {}
+    });
+    assert.strictEqual(context.service.start(), undefined);
 });
 
 let failed = 0;
