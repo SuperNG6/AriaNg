@@ -6,7 +6,9 @@
         var downloadTaskRefreshPromise = null;
         var pauseDownloadTaskRefresh = false;
         var needRequestWholeInfo = true;
-        var latestDownloadTaskRequestId = 0;
+        var downloadTaskModeGeneration = 0;
+        var downloadTaskRequestId = 0;
+        var latestAppliedDownloadTaskRequestId = 0;
 
         var collapsedFileDirs = {};
 
@@ -68,10 +70,11 @@
 
             var showFileList = $scope.showDownloadingFileList();
             var requestWholeInfo = needRequestWholeInfo || showFileList;
-            var requestId = ++latestDownloadTaskRequestId;
+            var modeGeneration = downloadTaskModeGeneration;
+            var requestId = ++downloadTaskRequestId;
 
             return aria2TaskService.getTaskList(location, requestWholeInfo, function (response) {
-                if (pauseDownloadTaskRefresh || requestId !== latestDownloadTaskRequestId) {
+                if (pauseDownloadTaskRefresh || modeGeneration !== downloadTaskModeGeneration || requestId <= latestAppliedDownloadTaskRequestId) {
                     return;
                 }
 
@@ -84,9 +87,11 @@
                 }
 
                 showFileList = $scope.showDownloadingFileList();
+                latestAppliedDownloadTaskRequestId = requestId;
 
                 if (showFileList && !response.context.requestWholeInfo) {
                     needRequestWholeInfo = true;
+                    downloadTaskModeGeneration++;
                     refreshDownloadTask(true);
                     return;
                 }
@@ -242,6 +247,7 @@
                 return;
             }
 
+            downloadTaskModeGeneration++;
             needRequestWholeInfo = !!enabled;
             $rootScope.loadPromise = refreshDownloadTask(false);
         });
