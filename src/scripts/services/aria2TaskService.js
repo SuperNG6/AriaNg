@@ -527,6 +527,14 @@
                     callback: callback
                 });
             },
+            changeTaskOptions: function (gid, options, callback, silent) {
+                return aria2RpcService.changeOption({
+                    gid: gid,
+                    options: options,
+                    silent: !!silent,
+                    callback: callback
+                });
+            },
             selectTaskFile: function (gid, selectedFileIndexArr, callback, silent) {
                 var selectedFileIndex = '';
 
@@ -538,7 +546,9 @@
                     selectedFileIndex += selectedFileIndexArr[i];
                 }
 
-                return this.setTaskOption(gid, 'select-file', selectedFileIndex, callback, silent);
+                return this.changeTaskOptions(gid, {
+                    'select-file': selectedFileIndex
+                }, callback, silent);
             },
             getBtTaskPeers: function (task, callback, silent, includeLocalPeer) {
                 return aria2RpcService.getPeers({

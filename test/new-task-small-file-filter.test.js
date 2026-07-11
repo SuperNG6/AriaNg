@@ -104,6 +104,43 @@ const loadSettingService = function (storedOptions) {
     };
 };
 
+const loadTaskService = function (changeOption) {
+    let factoryDefinition;
+    const module = {
+        factory: function (name, definition) {
+            factoryDefinition = definition;
+            return module;
+        }
+    };
+
+    vm.runInNewContext(read('src/scripts/services/aria2TaskService.js'), {
+        angular: {
+            module: function () {
+                return module;
+            }
+        },
+        decodeURI: decodeURI
+    });
+
+    const dependencies = {
+        '$q': {},
+        'bittorrentPeeridService': {},
+        'ariaNgConstants': {},
+        'aria2Errors': {},
+        'aria2RpcService': {changeOption: changeOption},
+        'ariaNgCommonService': {},
+        'ariaNgLocalizationService': {},
+        'ariaNgLogService': {},
+        'ariaNgSettingService': {}
+    };
+    const names = factoryDefinition.slice(0, -1);
+    const factory = factoryDefinition[factoryDefinition.length - 1];
+
+    return factory.apply(null, names.map(function (name) {
+        return dependencies[name];
+    }));
+};
+
 test('defines safe small-file filter defaults and queue storage key', function () {
     const constants = loadConstants();
 
@@ -139,6 +176,44 @@ test('builds an RPC identity without storing alias or secret', function () {
     });
 
     assert.strictEqual(context.service.getCurrentRpcIdentity(), 'https|aria2.local|6800|jsonrpc');
+});
+
+test('supports atomic task options and per-task pause overrides', function () {
+    const rpcSource = read('src/scripts/services/aria2RpcService.js');
+    const taskSource = read('src/scripts/services/aria2TaskService.js');
+
+    assert(rpcSource.includes('angular.isDefined(task.pauseOnAdded)'));
+    assert(taskSource.includes('changeTaskOptions: function (gid, options, callback, silent)'));
+    assert(taskSource.includes('options: options'));
+});
+
+test('sends multiple task options in one RPC call', function () {
+    let lastChangeOption;
+    const callback = function () {};
+    const rpcResult = {};
+    const service = loadTaskService(function (context) {
+        lastChangeOption = {
+            gid: context.gid,
+            options: Object.assign({}, context.options),
+            silent: context.silent,
+            callback: context.callback
+        };
+        return rpcResult;
+    });
+
+    const result = service.changeTaskOptions('gid-1', {
+        'select-file': '2,4',
+        'bt-remove-unselected-file': 'true'
+    }, callback, true);
+
+    assert.deepStrictEqual(lastChangeOption.options, {
+        'select-file': '2,4',
+        'bt-remove-unselected-file': 'true'
+    });
+    assert.strictEqual(lastChangeOption.gid, 'gid-1');
+    assert.strictEqual(lastChangeOption.silent, true);
+    assert.strictEqual(lastChangeOption.callback, callback);
+    assert.strictEqual(result, rpcResult);
 });
 
 let failed = 0;

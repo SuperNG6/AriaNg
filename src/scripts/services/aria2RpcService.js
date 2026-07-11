@@ -331,7 +331,7 @@
                     contexts.push({
                         silent: !!context.silent,
                         task: task,
-                        pauseOnAdded: context.pauseOnAdded
+                        pauseOnAdded: angular.isDefined(task.pauseOnAdded) ? task.pauseOnAdded : context.pauseOnAdded
                     });
                 }
 
