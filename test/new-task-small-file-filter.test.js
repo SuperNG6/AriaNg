@@ -253,6 +253,7 @@ const loadFilterService = function (options) {
     const changeRpcIdentities = [];
     const startRpcIdentities = [];
     const waitingListRequests = [];
+    const waitingListResponses = (options.waitingListResponses || []).slice();
     const statusResponses = (options.statusResponses || []).slice();
     const optionResponses = (options.optionResponses || []).slice();
     const changeResponses = (options.changeResponses || []).slice();
@@ -338,7 +339,8 @@ const loadFilterService = function (options) {
                     silent: silent,
                     requestParams: requestParams
                 });
-                const response = {success: true, data: options.waitingTasks || []};
+                const response = waitingListResponses.length > 0 ? waitingListResponses.shift() :
+                    {success: true, data: options.waitingTasks || []};
                 if (options.deferWaitingList) {
                     pendingWaitingListCallbacks.push({callback: callback, response: response});
                 } else {
@@ -1192,6 +1194,142 @@ test('a missing metadata root without a child remains queued and non-mutating', 
     assert.strictEqual(context.notifications.length, 0);
 });
 
+test('sanitizes scalar and malformed persisted queues before exposing or starting jobs', function () {
+    const scalarContext = loadFilterService({savedQueue: 'corrupt'});
+
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(scalarContext.service.getJobs())), []);
+    scalarContext.service.enqueue('fresh', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+    scalarContext.service.start();
+    scalarContext.tick();
+    assert.strictEqual(scalarContext.getSavedQueue().length, 1);
+    assert.strictEqual(scalarContext.getSavedQueue()[0].rootGid, 'fresh');
+
+    const valid = {
+        rpcIdentity: 'http|localhost|6800|jsonrpc', rootGid: 'valid', childGid: null,
+        thresholdBytes: 100, startAfterFilter: 'false', sourceType: 'magnet',
+        stage: 'waiting-metadata', retryCount: -4, createdAt: 'bad', updatedAt: Infinity
+    };
+    const mixedContext = loadFilterService({savedQueue: [null, {}, {
+        rpcIdentity: 'rpc', rootGid: 'bad-stage', thresholdBytes: 100,
+        startAfterFilter: true, sourceType: 'magnet', stage: 'evil-stage'
+    }, valid]});
+    const sanitized = JSON.parse(JSON.stringify(mixedContext.service.getJobs()));
+
+    assert.strictEqual(sanitized.length, 1);
+    assert.strictEqual(sanitized[0].rootGid, 'valid');
+    assert.strictEqual(sanitized[0].childGid, '');
+    assert.strictEqual(sanitized[0].startAfterFilter, false);
+    assert.strictEqual(sanitized[0].retryCount, 0);
+    assert(Number.isFinite(sanitized[0].createdAt));
+    assert(Number.isFinite(sanitized[0].updatedAt));
+    assert.strictEqual(mixedContext.getSavedQueue().length, 1);
+
+    mixedContext.service.getJobs().push({stage: 'evil-stage'});
+    mixedContext.service.enqueue('', {thresholdBytes: -1, startAfterFilter: 'maybe', sourceType: 'other'});
+    assert.strictEqual(mixedContext.service.getJobs().length, 1);
+    assert.strictEqual(mixedContext.getSavedQueue().length, 1);
+});
+
+test('removes a missing metadata root after three consecutive empty reconciliation scans', function () {
+    const context = loadFilterService({statusResponses: [
+        {success: false, data: {message: 'GID deadbeef is not found'}},
+        {success: false, data: {message: 'GID deadbeef is not found'}},
+        {success: false, data: {message: 'GID deadbeef is not found'}}
+    ]});
+    context.service.enqueue('deadbeef', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'});
+    context.service.start();
+
+    context.tick();
+    context.tick();
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    context.tick();
+
+    assert.strictEqual(context.getSavedQueue().length, 0);
+    assert.strictEqual(context.service.getStatus().visible, false);
+    assert.deepStrictEqual(context.startedGids, []);
+});
+
+test('seeing a live root resets the consecutive missing-root scan count', function () {
+    const context = loadFilterService({statusResponses: [
+        {success: false, data: {message: 'GID root is not found'}},
+        {success: false, data: {message: 'GID root is not found'}},
+        {success: true, data: {gid: 'root', status: 'active', files: []}},
+        {success: false, data: {message: 'GID root is not found'}},
+        {success: false, data: {message: 'GID root is not found'}},
+        {success: false, data: {message: 'GID root is not found'}}
+    ]});
+    context.service.enqueue('root', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'magnet'});
+    context.service.start();
+
+    for (let i = 0; i < 5; i++) {
+        context.tick();
+    }
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    context.tick();
+    assert.strictEqual(context.getSavedQueue().length, 0);
+});
+
+test('missing-root reconciliation ignores transient list failures and ambiguous children', function () {
+    const transient = loadFilterService({
+        statusResponseForGid: function () {
+            return {success: false, data: {message: 'GID root is not found'}};
+        },
+        waitingListResponses: [
+            {success: true, data: []},
+            {success: false, data: {message: 'network'}},
+            {success: true, data: []},
+            {success: true, data: []}
+        ]
+    });
+    transient.service.enqueue('root', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'magnet'});
+    transient.service.start();
+    transient.tick();
+    transient.tick();
+    transient.tick();
+    assert.strictEqual(transient.getSavedQueue().length, 1);
+    transient.tick();
+    assert.strictEqual(transient.getSavedQueue().length, 0);
+
+    const ambiguous = loadFilterService({
+        statusResponseForGid: function () {
+            return {success: false, data: {message: 'GID root is not found'}};
+        },
+        waitingTasks: [{gid: 'one', following: 'root'}, {gid: 'two', following: 'root'}]
+    });
+    ambiguous.service.enqueue('root', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'magnet'});
+    ambiguous.service.start();
+    for (let i = 0; i < 6; i++) {
+        ambiguous.tick();
+    }
+    assert.strictEqual(ambiguous.getSavedQueue().length, 1);
+});
+
+test('terminal remote torrent roots settle after a bounded child creation race', function () {
+    ['complete', 'error', 'removed'].forEach(function (terminalStatus) {
+        const context = loadFilterService({tasks: {
+            root: {gid: 'root', status: terminalStatus, files: []}
+        }});
+        context.service.enqueue('root', {
+            thresholdBytes: 100, startAfterFilter: true, sourceType: 'remote-torrent'
+        });
+        context.service.start();
+
+        context.tick();
+        context.tick();
+        assert.strictEqual(context.getSavedQueue().length, 1);
+        context.tick();
+
+        assert.strictEqual(context.getSavedQueue().length, 0);
+        assert.deepStrictEqual(context.startedGids, []);
+        assert.strictEqual(context.service.getStatus().waiting, 0);
+        if (terminalStatus === 'complete') {
+            assert.strictEqual(context.service.getStatus().full, 1);
+        }
+    });
+});
+
 test('a deleted local torrent is removed from the queue without a warning', function () {
     const context = loadFilterService({statusResponses: [{
         success: false, data: {message: 'No such download for GID#deleted'}
@@ -1392,7 +1530,7 @@ test('enqueue after an RPC switch counts stored and new jobs once', function () 
     assert.strictEqual(context.getSavedQueue().length, 2);
 });
 
-test('notifies once when fallback completes even while other metadata is waiting', function () {
+test('defers fallback notification while the current batch is still waiting', function () {
     const context = loadFilterService({
         tasks: {
             failed: {gid: 'failed', status: 'paused', bittorrent: {}, files: [
@@ -1417,10 +1555,81 @@ test('notifies once when fallback completes even while other metadata is waiting
         context.tick();
     }
 
-    assert.strictEqual(context.notifications.length, 1);
-    assert.strictEqual(context.notifications[0].options.type, 'warning');
+    assert.strictEqual(context.notifications.length, 0);
     assert.strictEqual(context.getSavedQueue().length, 1);
     assert.strictEqual(context.getSavedQueue()[0].rootGid, 'waiting');
+});
+
+test('emits one fallback notification with the final completed batch count', function () {
+    const makeTask = function (gid) {
+        return {gid: gid, status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]};
+    };
+    const context = loadFilterService({
+        tasks: {one: makeTask('one'), two: makeTask('two')},
+        taskOptions: {'bt-remove-unselected-file': 'false'},
+        changeResponses: [
+            {success: false}, {success: false}, {success: false}, {success: false},
+            {success: false}, {success: false}, {success: true}, {success: true}
+        ]
+    });
+    context.service.enqueue('one', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'torrent'});
+    context.service.enqueue('two', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'torrent'});
+    context.service.start();
+    context.tickUntilIdle();
+
+    assert.strictEqual(context.notifications.length, 1);
+    assert.strictEqual(context.notifications[0].content, 'format.bt-file-filter.fallback');
+    assert.strictEqual(context.notifications[0].options.type, 'warning');
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.notifications[0].options.contentParams)), {count: 2});
+    assert.strictEqual(context.service.getStatus().fallback, 2);
+});
+
+test('all-small and all-large partial selections restore full semantics and cleanup option', function () {
+    const cases = [
+        [{index: '1', length: '1', selected: 'false'}, {index: '2', length: '2', selected: 'true'}],
+        [{index: '1', length: '200', selected: 'true'}, {index: '2', length: '300', selected: 'false'}]
+    ];
+
+    cases.forEach(function (files) {
+        const context = loadFilterService({
+            tasks: {task: {gid: 'task', status: 'paused', bittorrent: {}, files: files}},
+            taskOptions: {'bt-remove-unselected-file': 'true'}
+        });
+        context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'});
+        context.service.start();
+        context.tickUntilIdle();
+
+        assert.deepStrictEqual(context.changedOptions, [{gid: 'task', options: {
+            'select-file': '1,2', 'bt-remove-unselected-file': 'true'
+        }}]);
+        assert.deepStrictEqual(context.startedGids, ['task']);
+        assert.strictEqual(context.service.getStatus().full, 1);
+        assert.strictEqual(context.service.getStatus().fallback, 0);
+    });
+});
+
+test('uncertain full restoration reconciles before completing Download Later', function () {
+    const context = loadFilterService({
+        tasks: {task: {gid: 'task', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'false'},
+            {index: '2', length: '2', selected: 'true'}
+        ]}},
+        taskOptions: {'bt-remove-unselected-file': 'false'},
+        changeResponses: [{success: false, data: {message: 'connection closed'}}],
+        applyFailedChanges: true
+    });
+    context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'torrent'});
+    context.service.start();
+    context.tickUntilIdle();
+
+    assert.strictEqual(context.changedOptions.length, 1);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(context.service.getStatus().full, 1);
+    assert.strictEqual(context.service.getStatus().fallback, 0);
+    assert.strictEqual(context.notifications.length, 0);
 });
 
 test('a metadata-waiting job does not block later ready jobs', function () {

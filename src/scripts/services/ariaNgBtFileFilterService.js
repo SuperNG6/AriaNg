@@ -3,7 +3,125 @@
 
     angular.module('ariaNg').factory('ariaNgBtFileFilterService', ['$interval', '$timeout', 'ariaNgConstants', 'ariaNgStorageService', 'ariaNgSettingService', 'ariaNgNotificationService', 'ariaNgLogService', 'aria2TaskService', function ($interval, $timeout, ariaNgConstants, ariaNgStorageService, ariaNgSettingService, ariaNgNotificationService, ariaNgLogService, aria2TaskService) {
         var storageKey = ariaNgConstants.btFileFilterQueueStorageKey;
-        var jobs = ariaNgStorageService.get(storageKey) || [];
+        var storedJobs = ariaNgStorageService.get(storageKey);
+        var allowedSourceTypes = ['magnet', 'remote-torrent', 'torrent'];
+        var allowedStages = [
+            'waiting-metadata', 'waiting-files', 'applying-filter', 'restoring-full',
+            'starting-filtered', 'starting-full', 'starting-fallback'
+        ];
+        var missingRootScanLimit = 3;
+
+        var normalizeInteger = function (value, defaultValue) {
+            var number = Number(value);
+            return isFinite(number) && number >= 0 ? Math.floor(number) : defaultValue;
+        };
+
+        var normalizeIndexes = function (value) {
+            if (!Array.isArray(value)) {
+                return [];
+            }
+
+            var indexes = [];
+            for (var i = 0; i < value.length; i++) {
+                var index = Number(value[i]);
+                if (isFinite(index) && index > 0 && index === Math.floor(index) && indexes.indexOf(index) < 0) {
+                    indexes.push(index);
+                }
+            }
+            return indexes;
+        };
+
+        var normalizeBoolean = function (value) {
+            if (value === true || value === 'true' || value === 1 || value === '1') {
+                return true;
+            }
+            if (value === false || value === 'false' || value === 0 || value === '0') {
+                return false;
+            }
+            return null;
+        };
+
+        var sanitizeJob = function (job) {
+            if (!job || typeof job !== 'object' || Array.isArray(job)) {
+                return null;
+            }
+
+            var rpcIdentity = typeof job.rpcIdentity === 'string' ? job.rpcIdentity.trim() : '';
+            var rootGid = typeof job.rootGid === 'string' ? job.rootGid.trim() : '';
+            var thresholdBytes = Number(job.thresholdBytes);
+            var startAfterFilter = normalizeBoolean(job.startAfterFilter);
+            if (!rpcIdentity || !rootGid || !isFinite(thresholdBytes) || thresholdBytes <= 0 ||
+                startAfterFilter === null || allowedSourceTypes.indexOf(job.sourceType) < 0 ||
+                allowedStages.indexOf(job.stage) < 0) {
+                return null;
+            }
+
+            var timestamp = Date.now();
+            var createdAt = Number(job.createdAt);
+            var updatedAt = Number(job.updatedAt);
+            var sanitized = {
+                rpcIdentity: rpcIdentity,
+                rootGid: rootGid,
+                childGid: typeof job.childGid === 'string' ? job.childGid.trim() : '',
+                thresholdBytes: thresholdBytes,
+                startAfterFilter: startAfterFilter,
+                sourceType: job.sourceType,
+                stage: job.stage,
+                retryCount: normalizeInteger(job.retryCount, 0),
+                originalRemoveUnselectedFile: job.originalRemoveUnselectedFile === null ||
+                    typeof job.originalRemoveUnselectedFile === 'undefined' ? null :
+                    String(job.originalRemoveUnselectedFile),
+                createdAt: isFinite(createdAt) && createdAt > 0 ? createdAt : timestamp,
+                updatedAt: isFinite(updatedAt) && updatedAt > 0 ? updatedAt : timestamp,
+                missingRootScanCount: normalizeInteger(job.missingRootScanCount, 0),
+                terminalChildScanCount: normalizeInteger(job.terminalChildScanCount, 0)
+            };
+
+            var selectedIndexes = normalizeIndexes(job.selectedIndexes);
+            var allIndexes = normalizeIndexes(job.allIndexes);
+            if (selectedIndexes.length > 0) {
+                sanitized.selectedIndexes = selectedIndexes;
+            }
+            if (allIndexes.length > 0) {
+                sanitized.allIndexes = allIndexes;
+            }
+            if (job.restoreAttempted) {
+                sanitized.restoreAttempted = true;
+            }
+            if (job.restorationOutcome === 'full' || job.restorationOutcome === 'fallback') {
+                sanitized.restorationOutcome = job.restorationOutcome;
+            } else if (job.stage === 'restoring-full') {
+                sanitized.restorationOutcome = 'fallback';
+            }
+
+            return sanitized;
+        };
+
+        var sanitizeQueue = function (value) {
+            var sanitized = [];
+            if (!Array.isArray(value)) {
+                return sanitized;
+            }
+            for (var i = 0; i < value.length; i++) {
+                var job = sanitizeJob(value[i]);
+                if (job) {
+                    sanitized.push(job);
+                }
+            }
+            return sanitized;
+        };
+
+        var jobs = sanitizeQueue(storedJobs);
+        var serializedStoredJobs;
+        var serializedJobs = JSON.stringify(jobs);
+        try {
+            serializedStoredJobs = JSON.stringify(storedJobs);
+        } catch (error) {
+            serializedStoredJobs = null;
+        }
+        if (serializedStoredJobs !== serializedJobs) {
+            ariaNgStorageService.set(storageKey, jobs);
+        }
         var status = {
             visible: false,
             type: 'idle',
@@ -22,7 +140,6 @@
         var activeRpcIdentity = null;
         var pollCursor = 0;
         var statusVersion = 0;
-        var warningNotified = false;
         var aggregate = {
             total: 0,
             processed: 0,
@@ -157,7 +274,6 @@
             aggregate.filtered = 0;
             aggregate.full = 0;
             aggregate.fallback = 0;
-            warningNotified = false;
         };
 
         var synchronizeRpcIdentity = function () {
@@ -257,10 +373,10 @@
         };
 
         var notifyFallback = function () {
-            if (!warningNotified) {
-                warningNotified = true;
-                ariaNgNotificationService.notifyInPage('', 'format.bt-file-filter.fallback', {type: 'warning'});
-            }
+            ariaNgNotificationService.notifyInPage('', 'format.bt-file-filter.fallback', {
+                type: 'warning',
+                contentParams: {count: aggregate.fallback}
+            });
         };
 
         var showOutcomeSummary = function () {
@@ -286,10 +402,6 @@
             removeJob(job);
             aggregate.processed++;
             aggregate[outcome]++;
-
-            if (outcome === 'fallback') {
-                notifyFallback();
-            }
 
             if (getCurrentJobs().length < 1) {
                 showOutcomeSummary();
@@ -350,6 +462,7 @@
             }
 
             var allIndexes = job.allIndexes || plan.allIndexes;
+            var outcome = job.restorationOutcome || 'fallback';
             var fullSelection = allIndexes.join(',');
             aria2TaskService.getTaskOptions(task.gid, function (optionsResponse) {
                 if (!isJobOnCurrentRpc(job, rpcIdentity)) {
@@ -367,9 +480,12 @@
                 }
 
                 var currentOptions = optionsResponse.data || {};
+                if (job.originalRemoveUnselectedFile === null || typeof job.originalRemoveUnselectedFile === 'undefined') {
+                    job.originalRemoveUnselectedFile = getOptionValue(currentOptions, 'bt-remove-unselected-file', 'false');
+                }
                 if (job.restoreAttempted && sameIndexes(task.files, allIndexes) &&
                     getOptionValue(currentOptions, 'bt-remove-unselected-file', 'false') === job.originalRemoveUnselectedFile) {
-                    startOrComplete(job, task.gid, 'fallback', rpcIdentity);
+                    startOrComplete(job, task.gid, outcome, rpcIdentity);
                     return;
                 }
 
@@ -385,7 +501,7 @@
                     }
 
                     if (response && response.success) {
-                        startOrComplete(job, task.gid, 'fallback', rpcIdentity);
+                        startOrComplete(job, task.gid, outcome, rpcIdentity);
                     } else if (isNotFoundResponse(response)) {
                         removeDeletedJob(job, rpcIdentity);
                     } else {
@@ -449,6 +565,7 @@
                         if (job.retryCount >= 3) {
                             job.stage = 'restoring-full';
                             job.restoreAttempted = false;
+                            job.restorationOutcome = 'fallback';
                         }
                         touchAndSave(job);
                         finishTick();
@@ -468,12 +585,27 @@
                 processRestoration(job, task, plan, rpcIdentity);
             } else if (plan.mode === 'filter') {
                 processMixedTask(job, task, plan, rpcIdentity);
+            } else if (!sameIndexes(task.files, plan.allIndexes)) {
+                job.stage = 'restoring-full';
+                job.restoreAttempted = false;
+                job.restorationOutcome = 'full';
+                job.allIndexes = plan.allIndexes;
+                touchAndSave(job);
+                processRestoration(job, task, plan, rpcIdentity);
             } else {
                 startOrComplete(job, task.gid, 'full', rpcIdentity);
             }
         };
 
-        var recoverMetadataChild = function (job, rpcIdentity) {
+        var settleAbsentMetadataChild = function (job, rpcIdentity, terminalStatus) {
+            if (terminalStatus === 'complete') {
+                completeJob(job, 'full', rpcIdentity);
+            } else {
+                removeDeletedJob(job, rpcIdentity);
+            }
+        };
+
+        var recoverMetadataChild = function (job, rpcIdentity, terminalStatus) {
             aria2TaskService.getTaskList('waiting', true, function (response) {
                 if (!isJobOnCurrentRpc(job, rpcIdentity)) {
                     finishTick();
@@ -505,6 +637,8 @@
                     if (!currentJob.childGid && childGids.length === 1) {
                         currentJob.childGid = childGids[0];
                         currentJob.stage = 'waiting-files';
+                        currentJob.missingRootScanCount = 0;
+                        currentJob.terminalChildScanCount = 0;
                         currentJob.updatedAt = Date.now();
                         recoveredAnyJob = true;
                         recoveredCurrentJob = recoveredCurrentJob || currentJob === job;
@@ -520,6 +654,23 @@
                     return;
                 }
 
+                var currentChildGids = childGidsByRoot[job.rootGid] || [];
+                if (currentChildGids.length > 1) {
+                    job.missingRootScanCount = 0;
+                    job.terminalChildScanCount = 0;
+                    touchAndSave(job);
+                    finishTick();
+                    return;
+                }
+
+                var counter = terminalStatus ? 'terminalChildScanCount' : 'missingRootScanCount';
+                job[counter] = normalizeInteger(job[counter], 0) + 1;
+                if (job[counter] >= missingRootScanLimit) {
+                    settleAbsentMetadataChild(job, rpcIdentity, terminalStatus);
+                    return;
+                }
+                touchAndSave(job);
+
                 finishTick();
             }, true, ['gid', 'following']);
         };
@@ -533,7 +684,7 @@
             if (!response || !response.success) {
                 if (isNotFoundResponse(response)) {
                     if (!job.childGid && (job.sourceType === 'magnet' || job.sourceType === 'remote-torrent')) {
-                        recoverMetadataChild(job, rpcIdentity);
+                        recoverMetadataChild(job, rpcIdentity, null);
                     } else {
                         removeDeletedJob(job, rpcIdentity);
                     }
@@ -544,6 +695,10 @@
             }
 
             var task = response.data;
+            if (job.missingRootScanCount) {
+                job.missingRootScanCount = 0;
+                touchAndSave(job);
+            }
             if (job.stage.indexOf('starting-') === 0) {
                 processStartingJob(job, task, rpcIdentity);
             } else if (task.bittorrent && task.files && task.files.length > 0) {
@@ -551,8 +706,12 @@
             } else if (task.followedBy && task.followedBy.length > 0) {
                 job.childGid = task.followedBy[0];
                 job.stage = 'waiting-files';
+                job.terminalChildScanCount = 0;
                 touchAndSave(job);
                 finishTick();
+            } else if (!job.childGid && (task.status === 'complete' || task.status === 'error' ||
+                task.status === 'removed')) {
+                recoverMetadataChild(job, rpcIdentity, task.status);
             } else {
                 job.stage = 'waiting-metadata';
                 touchAndSave(job);
@@ -599,19 +758,25 @@
 
             var timestamp = Date.now();
             var currentCount = getCurrentJobs().length;
-            jobs.push({
+            var job = sanitizeJob({
                 rpcIdentity: rpcIdentity,
                 rootGid: rootGid,
                 childGid: '',
-                thresholdBytes: intent.thresholdBytes,
-                startAfterFilter: intent.startAfterFilter,
-                sourceType: intent.sourceType,
+                thresholdBytes: intent && intent.thresholdBytes,
+                startAfterFilter: intent && intent.startAfterFilter,
+                sourceType: intent && intent.sourceType,
                 stage: 'waiting-metadata',
                 retryCount: 0,
                 originalRemoveUnselectedFile: null,
+                missingRootScanCount: 0,
+                terminalChildScanCount: 0,
                 createdAt: timestamp,
                 updatedAt: timestamp
             });
+            if (!job) {
+                return;
+            }
+            jobs.push(job);
             saveJobs();
 
             if (pollingPromise) {
@@ -649,7 +814,7 @@
             planFiles: planFiles,
             enqueue: enqueue,
             getJobs: function () {
-                return jobs;
+                return sanitizeQueue(jobs);
             },
             getStatus: function () {
                 return status;
