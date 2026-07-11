@@ -697,6 +697,12 @@
                 var optionKey = this.getTaskListDisplayOrderKey(taskListPageType);
                 setOption(optionKey, value);
             },
+            getShowFileListInDownloadingPage: function () {
+                return !!getOption('showFileListInDownloadingPage');
+            },
+            setShowFileListInDownloadingPage: function (value) {
+                setOption('showFileListInDownloadingPage', !!value);
+            },
             getFileListDisplayOrder: function () {
                 var value = getOption('fileListDisplayOrder');
 
