@@ -198,7 +198,11 @@
 
         var isNotFoundResponse = function (response) {
             var message = response && response.data && response.data.message;
-            return /gid.*not found/i.test(String(message || ''));
+            return /gid.*not found|no such download.*gid/i.test(String(message || ''));
+        };
+
+        var isSuccessfulResponse = function (response) {
+            return !!(response && (response.success || response.hasSuccess));
         };
 
         var sameIndexes = function (files, indexes) {
@@ -314,7 +318,7 @@
                     return;
                 }
 
-                if (response && response.success) {
+                if (isSuccessfulResponse(response)) {
                     completeJob(job, outcome, rpcIdentity);
                 } else if (isNotFoundResponse(response)) {
                     removeDeletedJob(job, rpcIdentity);
@@ -469,6 +473,54 @@
             }
         };
 
+        var recoverMetadataChild = function (job, rpcIdentity) {
+            aria2TaskService.getTaskList('waiting', true, function (response) {
+                if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                    finishTick();
+                    return;
+                }
+
+                if (!response || !response.success) {
+                    finishTick();
+                    return;
+                }
+
+                var waitingTasks = response.data || [];
+                var childGidsByRoot = {};
+                for (var i = 0; i < waitingTasks.length; i++) {
+                    if (waitingTasks[i].following) {
+                        childGidsByRoot[waitingTasks[i].following] = waitingTasks[i].gid;
+                    }
+                }
+
+                var currentJobs = getCurrentJobs();
+                var recoveredCurrentJob = false;
+                var recoveredAnyJob = false;
+                for (var j = 0; j < currentJobs.length; j++) {
+                    var currentJob = currentJobs[j];
+                    var childGid = childGidsByRoot[currentJob.rootGid];
+                    if (!currentJob.childGid && childGid) {
+                        currentJob.childGid = childGid;
+                        currentJob.stage = 'waiting-files';
+                        currentJob.updatedAt = Date.now();
+                        recoveredAnyJob = true;
+                        recoveredCurrentJob = recoveredCurrentJob || currentJob === job;
+                    }
+                }
+
+                if (recoveredAnyJob) {
+                    saveJobs();
+                }
+
+                if (recoveredCurrentJob) {
+                    finishTick();
+                    return;
+                }
+
+                removeDeletedJob(job, rpcIdentity);
+            }, true, ['gid', 'following']);
+        };
+
         var processTaskResponse = function (job, response, rpcIdentity) {
             if (!isJobOnCurrentRpc(job, rpcIdentity)) {
                 finishTick();
@@ -477,7 +529,11 @@
 
             if (!response || !response.success) {
                 if (isNotFoundResponse(response)) {
-                    removeDeletedJob(job, rpcIdentity);
+                    if (!job.childGid && (job.sourceType === 'magnet' || job.sourceType === 'remote-torrent')) {
+                        recoverMetadataChild(job, rpcIdentity);
+                    } else {
+                        removeDeletedJob(job, rpcIdentity);
+                    }
                 } else {
                     finishTick();
                 }

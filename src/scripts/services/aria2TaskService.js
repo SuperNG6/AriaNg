@@ -464,7 +464,7 @@
         };
 
         return {
-            getTaskList: function (type, full, callback, silent) {
+            getTaskList: function (type, full, callback, silent, requestParams) {
                 var invokeMethod = null;
 
                 if (type === 'downloading') {
@@ -479,7 +479,8 @@
 
                 return invokeMethod({
                     requestWholeInfo: full,
-                    requestParams: full ? aria2RpcService.getFullTaskParams() : aria2RpcService.getBasicTaskParams(),
+                    requestParams: angular.isDefined(requestParams) ? requestParams :
+                        (full ? aria2RpcService.getFullTaskParams() : aria2RpcService.getBasicTaskParams()),
                     silent: !!silent,
                     callback: function (response) {
                         if (!callback) {

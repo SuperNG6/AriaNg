@@ -191,7 +191,7 @@ const loadSettingService = function (storedOptions) {
     };
 };
 
-const loadTaskService = function (changeOption) {
+const loadTaskService = function (changeOption, rpcOverrides) {
     let factoryDefinition;
     const module = {
         factory: function (name, definition) {
@@ -204,6 +204,9 @@ const loadTaskService = function (changeOption) {
         angular: {
             module: function () {
                 return module;
+            },
+            isDefined: function (value) {
+                return typeof value !== 'undefined';
             }
         },
         decodeURI: decodeURI
@@ -214,7 +217,7 @@ const loadTaskService = function (changeOption) {
         'bittorrentPeeridService': {},
         'ariaNgConstants': {},
         'aria2Errors': {},
-        'aria2RpcService': {changeOption: changeOption},
+        'aria2RpcService': Object.assign({changeOption: changeOption}, rpcOverrides || {}),
         'ariaNgCommonService': {},
         'ariaNgLocalizationService': {},
         'ariaNgLogService': {},
@@ -248,6 +251,7 @@ const loadFilterService = function (options) {
     const optionRpcIdentities = [];
     const changeRpcIdentities = [];
     const startRpcIdentities = [];
+    const waitingListRequests = [];
     const statusResponses = (options.statusResponses || []).slice();
     const optionResponses = (options.optionResponses || []).slice();
     const changeResponses = (options.changeResponses || []).slice();
@@ -304,7 +308,9 @@ const loadFilterService = function (options) {
                     pendingStatusCallbacks.push({gid: gid, callback: callback});
                     return;
                 }
-                if (statusResponses.length > 0) {
+                if (options.statusResponseForGid) {
+                    callback(options.statusResponseForGid(gid));
+                } else if (statusResponses.length > 0) {
                     callback(statusResponses.shift());
                 } else if (tasks[gid]) {
                     callback({success: true, data: tasks[gid]});
@@ -323,6 +329,15 @@ const loadFilterService = function (options) {
                 } else {
                     callback(response);
                 }
+            },
+            getTaskList: function (type, full, callback, silent, requestParams) {
+                waitingListRequests.push({
+                    type: type,
+                    full: full,
+                    silent: silent,
+                    requestParams: requestParams
+                });
+                callback({success: true, data: options.waitingTasks || []});
             },
             changeTaskOptions: function (gid, rpcOptions, callback) {
                 changeRpcIdentities.push(rpcIdentity);
@@ -375,6 +390,7 @@ const loadFilterService = function (options) {
         optionRpcIdentities: optionRpcIdentities,
         changeRpcIdentities: changeRpcIdentities,
         startRpcIdentities: startRpcIdentities,
+        waitingListRequests: waitingListRequests,
         intervals: intervals,
         timeouts: timeouts,
         setRpcIdentity: function (value) { rpcIdentity = value; },
@@ -823,6 +839,26 @@ test('sends multiple task options in one RPC call', function () {
     assert.strictEqual(result, rpcResult);
 });
 
+test('requests metadata relationship fields only for targeted waiting-list discovery', function () {
+    let tellWaitingContext;
+    const service = loadTaskService(function () {}, {
+        getFullTaskParams: function () { return ['default-full']; },
+        getBasicTaskParams: function () { return ['default-basic']; },
+        tellWaiting: function (context) {
+            tellWaitingContext = context;
+            return 'waiting-promise';
+        }
+    });
+    const requestParams = ['gid', 'following'];
+    const callback = function () {};
+
+    const result = service.getTaskList('waiting', true, callback, true, requestParams);
+
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(tellWaitingContext.requestParams)), requestParams);
+    assert.strictEqual(tellWaitingContext.silent, true);
+    assert.strictEqual(result, 'waiting-promise');
+});
+
 test('recognizes supported BT metadata inputs only', function () {
     const service = loadFilterService().service;
 
@@ -925,6 +961,102 @@ test('follows metadata child, filters mixed files, enables cleanup, and starts D
         options: {'select-file': '2', 'bt-remove-unselected-file': 'true'}
     }]);
     assert.deepStrictEqual(context.startedGids, ['child']);
+    assert.strictEqual(context.getSavedQueue().length, 0);
+});
+
+test('recovers five paused magnet children when aria2 no longer retains metadata results', function () {
+    const waitingTasks = [];
+    const startResponses = [];
+    const tasks = {};
+
+    for (let i = 1; i <= 5; i++) {
+        const child = {
+            gid: 'child-' + i,
+            following: 'root-' + i,
+            status: 'paused',
+            bittorrent: {mode: 'multi'},
+            files: [
+                {index: '1', length: '1048576', selected: 'true'},
+                {index: '2', length: '209715200', selected: 'true'}
+            ]
+        };
+        waitingTasks.push(child);
+        tasks[child.gid] = child;
+        startResponses.push({
+            hasSuccess: true,
+            hasError: false,
+            results: [{success: true, data: 'OK'}]
+        });
+    }
+
+    const context = loadFilterService({
+        waitingTasks: waitingTasks,
+        tasks: tasks,
+        statusResponseForGid: function (gid) {
+            return tasks[gid] ? {success: true, data: tasks[gid]} : {
+                success: false,
+                data: {message: 'No such download for GID#' + gid}
+            };
+        },
+        startResponses: startResponses,
+        taskOptions: {'bt-remove-unselected-file': 'false'}
+    });
+
+    for (let i = 1; i <= 5; i++) {
+        context.service.enqueue('root-' + i, {
+            thresholdBytes: 104857600,
+            startAfterFilter: true,
+            sourceType: 'magnet'
+        });
+    }
+    context.service.start();
+    context.tickUntilIdle();
+
+    assert.strictEqual(context.waitingListRequests.length, 1);
+    assert(context.waitingListRequests.every(function (request) {
+        return request.type === 'waiting' && request.full === true && request.silent === true &&
+            JSON.stringify(request.requestParams) ===
+                JSON.stringify(['gid', 'following']);
+    }));
+    assert.deepStrictEqual(context.changedOptions.map(function (change) {
+        return change.gid;
+    }).sort(), ['child-1', 'child-2', 'child-3', 'child-4', 'child-5']);
+    assert.deepStrictEqual(context.startedGids.slice().sort(),
+        ['child-1', 'child-2', 'child-3', 'child-4', 'child-5']);
+    assert.strictEqual(context.getSavedQueue().length, 0);
+    assert.strictEqual(context.service.getStatus().filtered, 5);
+});
+
+test('keeps a recovered Download Later magnet child paused after filtering', function () {
+    const child = {
+        gid: 'child', following: 'root', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '209715200', selected: 'true'}
+        ]
+    };
+    const context = loadFilterService({
+        waitingTasks: [child],
+        statusResponseForGid: function (gid) {
+            return gid === 'child' ? {success: true, data: child} : {
+                success: false, data: {message: 'No such download for GID#root'}
+            };
+        },
+        taskOptions: {'bt-remove-unselected-file': 'false'}
+    });
+
+    context.service.enqueue('root', {
+        thresholdBytes: 104857600,
+        startAfterFilter: false,
+        sourceType: 'magnet'
+    });
+    context.service.start();
+    context.tickUntilIdle();
+
+    assert.deepStrictEqual(context.changedOptions, [{
+        gid: 'child',
+        options: {'select-file': '2', 'bt-remove-unselected-file': 'true'}
+    }]);
+    assert.deepStrictEqual(context.startedGids, []);
     assert.strictEqual(context.getSavedQueue().length, 0);
 });
 
