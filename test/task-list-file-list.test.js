@@ -104,6 +104,136 @@ const loadSettingService = function (storedOptions) {
     };
 };
 
+const loadListController = function (route) {
+    let controllerDefinition;
+    let now = 0;
+    let intervalCallback;
+    let nextTasks;
+    const requests = [];
+    const processCalls = [];
+    const listeners = {};
+    const fullTask = {
+        gid: 'gid-1',
+        status: 'active',
+        totalLength: '200',
+        completedLength: '20',
+        files: [{index: '1', path: '/downloads/a.bin', length: '200', completedLength: '20', selected: 'true'}],
+        bittorrent: {mode: 'multi', info: {name: 'bundle'}}
+    };
+    const basicTask = {
+        gid: 'gid-1',
+        status: 'active',
+        totalLength: '200',
+        completedLength: '40'
+    };
+    const module = {
+        controller: function (name, definition) {
+            controllerDefinition = definition;
+            return module;
+        }
+    };
+    const angular = {
+        module: function () { return module; },
+        element: function () { return {attr: function () {}, index: function () { return 0; }}; },
+        isUndefined: function (value) { return typeof value === 'undefined'; },
+        extend: function (target, source) { return Object.assign(target, source); }
+    };
+    const rootScope = {
+        taskContext: {list: []},
+        keydownActions: {}
+    };
+    const scope = {
+        $on: function (name, callback) { listeners[name] = callback; },
+        $apply: function (callback) { callback(); },
+        selectAllTasks: function () {},
+        removeTasks: function () {}
+    };
+    const commonService = {
+        parseOrderType: function () { return {type: 'default', equals: function () { return true; }, getValue: function () { return 'default'; }}; },
+        extendArray: function (source, target, key) {
+            if (!source || !target || source.length !== target.length) {
+                return false;
+            }
+
+            for (let i = 0; i < target.length; i++) {
+                if (source[i][key] !== target[i][key]) {
+                    return false;
+                }
+
+                Object.assign(target[i], source[i]);
+            }
+
+            return true;
+        }
+    };
+    const settingService = {
+        getShowFileListInTaskListPage: function () { return true; },
+        getDownloadTaskRefreshInterval: function () { return 1000; },
+        getDisplayOrder: function () { return 'default'; },
+        getFileListDisplayOrder: function () { return 'default'; },
+        setFileListDisplayOrder: function () {},
+        getDragAndDropTasks: function () { return false; }
+    };
+    const taskService = {
+        getTaskList: function (location, full, callback) {
+            const tasks = nextTasks || [JSON.parse(JSON.stringify(full ? fullTask : basicTask))];
+            nextTasks = null;
+            requests.push({time: now, location: location, full: full});
+            callback({success: true, context: {requestWholeInfo: full}, data: tasks});
+        },
+        processDownloadTasks: function (tasks, addVirtualFileNode) {
+            processCalls.push({time: now, addVirtualFileNode: addVirtualFileNode, tasks: tasks});
+            tasks.forEach(function (task) {
+                task.hasTaskName = true;
+                if (addVirtualFileNode && task.files) {
+                    task.multiDir = true;
+                }
+            });
+        }
+    };
+
+    vm.runInNewContext(read('src/scripts/controllers/list.js'), {
+        angular: angular,
+        console: console
+    });
+
+    const dependencies = {
+        '$rootScope': rootScope,
+        '$scope': scope,
+        '$window': {Date: {now: function () { return now; }}},
+        '$location': {path: function () { return '/' + route; }},
+        '$route': {},
+        '$interval': Object.assign(function (callback) {
+            intervalCallback = callback;
+            return {};
+        }, {cancel: function () {}}),
+        'dragulaService': {options: function () {}},
+        'aria2RpcErrors': {Unauthorized: {message: 'Unauthorized'}},
+        'ariaNgCommonService': commonService,
+        'ariaNgSettingService': settingService,
+        'aria2TaskService': taskService
+    };
+    const names = controllerDefinition.slice(0, -1);
+    const controller = controllerDefinition[controllerDefinition.length - 1];
+    controller.apply(null, names.map(function (name) { return dependencies[name]; }));
+
+    return {
+        requests: requests,
+        processCalls: processCalls,
+        rootScope: rootScope,
+        scope: scope,
+        tick: function (milliseconds) {
+            now += milliseconds;
+            intervalCallback();
+        },
+        toggle: function (enabled) {
+            settingService.getShowFileListInTaskListPage = function () { return enabled; };
+            listeners['task-list-file-list-mode.changed']({}, enabled);
+        },
+        setNextTasks: function (tasks) { nextTasks = tasks; }
+    };
+};
+
 test('defines the generic task-list preference with a false default', function () {
     const constants = loadConstants();
 
@@ -150,13 +280,61 @@ test('exposes one toolbar toggle on all task-list routes', function () {
     assert(index.includes('ng-click="toggleTaskListFileList()"'));
 });
 
-test('uses continuous full refreshes only for active downloads', function () {
-    const list = read('src/scripts/controllers/list.js');
+test('throttles active file details while retaining one-second basic progress', function () {
+    const context = loadListController('downloading');
 
-    assert(list.includes("showFileList && location === 'downloading'"));
-    assert(list.includes('removeVirtualFileNodes($rootScope.taskContext.list);'));
-    assert(list.includes("$scope.$on('task-list-file-list-mode.changed'"));
-    assert(!list.includes("if (location !== 'downloading')"));
+    context.tick(1000);
+    context.tick(1000);
+    context.tick(1000);
+    context.tick(1000);
+    context.tick(1000);
+
+    assert.deepStrictEqual(context.requests.map(function (request) { return request.full; }), [true, false, false, false, false, true]);
+    assert.deepStrictEqual(context.requests.map(function (request) { return request.time; }), [0, 1000, 2000, 3000, 4000, 5000]);
+});
+
+test('does not rebuild active virtual file trees on basic ticks', function () {
+    const context = loadListController('downloading');
+    const initialFiles = context.rootScope.taskContext.list[0].files;
+
+    context.tick(1000);
+    context.tick(1000);
+
+    assert.strictEqual(context.rootScope.taskContext.list[0].files, initialFiles);
+    assert.strictEqual(context.processCalls.filter(function (call) { return call.addVirtualFileNode; }).length, 1);
+});
+
+test('refreshes active file details immediately when Files mode is enabled', function () {
+    const context = loadListController('downloading');
+
+    context.toggle(false);
+    context.tick(1000);
+    context.toggle(true);
+
+    assert.strictEqual(context.requests[context.requests.length - 1].full, true);
+    assert.strictEqual(context.requests[context.requests.length - 1].time, 1000);
+});
+
+test('does not add periodic full refreshes to waiting and stopped pages', function () {
+    ['waiting', 'stopped'].forEach(function (route) {
+        const context = loadListController(route);
+
+        for (let i = 0; i < 6; i++) {
+            context.tick(1000);
+        }
+
+        assert.deepStrictEqual(context.requests.map(function (request) { return request.full; }), [true, false, false, false, false, false, false]);
+    });
+});
+
+test('requests full details after a basic tick detects task-set changes', function () {
+    const context = loadListController('downloading');
+
+    context.setNextTasks([]);
+    context.tick(1000);
+    context.tick(1000);
+
+    assert.deepStrictEqual(context.requests.map(function (request) { return request.full; }), [true, false, true]);
 });
 
 test('renders the generic nested panel with read-only file controls', function () {

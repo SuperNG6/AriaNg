@@ -9,6 +9,8 @@
         var downloadTaskModeGeneration = 0;
         var downloadTaskRequestId = 0;
         var latestAppliedDownloadTaskRequestId = 0;
+        var taskFileListRefreshInterval = 5000;
+        var lastTaskFileListRequestTime = null;
 
         var collapsedFileDirs = {};
 
@@ -69,9 +71,16 @@
             }
 
             var showFileList = $scope.showTaskListFileList();
-            var requestWholeInfo = needRequestWholeInfo || (showFileList && location === 'downloading');
+            var currentTime = $window.Date.now();
+            var refreshTaskFileList = showFileList && location === 'downloading'
+                && (lastTaskFileListRequestTime === null || currentTime - lastTaskFileListRequestTime >= taskFileListRefreshInterval);
+            var requestWholeInfo = needRequestWholeInfo || refreshTaskFileList;
             var modeGeneration = downloadTaskModeGeneration;
             var requestId = ++downloadTaskRequestId;
+
+            if (requestWholeInfo && showFileList && location === 'downloading') {
+                lastTaskFileListRequestTime = currentTime;
+            }
 
             return aria2TaskService.getTaskList(location, requestWholeInfo, function (response) {
                 if (pauseDownloadTaskRefresh || modeGeneration !== downloadTaskModeGeneration || requestId <= latestAppliedDownloadTaskRequestId) {
@@ -95,6 +104,11 @@
                 if (isRequestWholeInfo) {
                     $rootScope.taskContext.list = taskList;
                     needRequestWholeInfo = false;
+
+                    if ($rootScope.taskContext.list && $rootScope.taskContext.list.length > 0) {
+                        removeVirtualFileNodes($rootScope.taskContext.list);
+                        aria2TaskService.processDownloadTasks($rootScope.taskContext.list, showFileList);
+                    }
                 } else {
                     if ($rootScope.taskContext.list && $rootScope.taskContext.list.length > 0) {
                         for (var i = 0; i < $rootScope.taskContext.list.length; i++) {
@@ -102,6 +116,13 @@
                             delete task.verifiedLength;
                             delete task.verifyIntegrityPending;
                         }
+                    }
+
+                    aria2TaskService.processDownloadTasks(taskList, false);
+
+                    for (var i = 0; i < taskList.length; i++) {
+                        delete taskList[i].taskName;
+                        delete taskList[i].hasTaskName;
                     }
 
                     if (ariaNgCommonService.extendArray(taskList, $rootScope.taskContext.list, 'gid')) {
@@ -112,8 +133,9 @@
                 }
 
                 if ($rootScope.taskContext.list && $rootScope.taskContext.list.length > 0) {
-                    removeVirtualFileNodes($rootScope.taskContext.list);
-                    aria2TaskService.processDownloadTasks($rootScope.taskContext.list, showFileList);
+                    if (!isRequestWholeInfo && !showFileList) {
+                        removeVirtualFileNodes($rootScope.taskContext.list);
+                    }
 
                     if (!isRequestWholeInfo) {
                         var hasFullStruct = false;
