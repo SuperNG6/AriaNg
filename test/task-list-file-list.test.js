@@ -226,6 +226,9 @@ const loadListController = function (route) {
             now += milliseconds;
             intervalCallback();
         },
+        setTime: function (milliseconds) {
+            now = milliseconds;
+        },
         toggle: function (enabled) {
             settingService.getShowFileListInTaskListPage = function () { return enabled; };
             listeners['task-list-file-list-mode.changed']({}, enabled);
@@ -315,6 +318,18 @@ test('refreshes active file details immediately when Files mode is enabled', fun
     assert.strictEqual(context.requests[context.requests.length - 1].time, 1000);
 });
 
+test('refreshes active file details immediately after the wall clock moves backward', function () {
+    const context = loadListController('downloading');
+
+    context.setTime(5000);
+    context.tick(0);
+    context.setTime(1000);
+    context.tick(1000);
+
+    assert.deepStrictEqual(context.requests.map(function (request) { return request.full; }), [true, true, true]);
+    assert.deepStrictEqual(context.requests.map(function (request) { return request.time; }), [0, 5000, 2000]);
+});
+
 test('does not add periodic full refreshes to waiting and stopped pages', function () {
     ['waiting', 'stopped'].forEach(function (route) {
         const context = loadListController(route);
@@ -331,6 +346,16 @@ test('requests full details after a basic tick detects task-set changes', functi
     const context = loadListController('downloading');
 
     context.setNextTasks([]);
+    context.tick(1000);
+    context.tick(1000);
+
+    assert.deepStrictEqual(context.requests.map(function (request) { return request.full; }), [true, false, true]);
+});
+
+test('requests full details after a same-length task replacement', function () {
+    const context = loadListController('downloading');
+
+    context.setNextTasks([{gid: 'gid-2', status: 'active', totalLength: '300', completedLength: '30'}]);
     context.tick(1000);
     context.tick(1000);
 

@@ -73,7 +73,8 @@
             var showFileList = $scope.showTaskListFileList();
             var currentTime = $window.Date.now();
             var refreshTaskFileList = showFileList && location === 'downloading'
-                && (lastTaskFileListRequestTime === null || currentTime - lastTaskFileListRequestTime >= taskFileListRefreshInterval);
+                && (lastTaskFileListRequestTime === null || currentTime < lastTaskFileListRequestTime
+                    || currentTime - lastTaskFileListRequestTime >= taskFileListRefreshInterval);
             var requestWholeInfo = needRequestWholeInfo || refreshTaskFileList;
             var modeGeneration = downloadTaskModeGeneration;
             var requestId = ++downloadTaskRequestId;
