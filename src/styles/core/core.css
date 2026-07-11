@@ -126,16 +126,6 @@ td {
     text-align: right;
 }
 
-.main-header .bt-file-filter-size.has-error {
-    border-color: #dd4b39;
-    box-shadow: none;
-}
-
-.main-header .bt-file-filter-size.has-error:focus {
-    border-color: #843534;
-    box-shadow: 0 0 0 1px rgba(221, 75, 57, .25);
-}
-
 .main-header .bt-file-filter-unit {
     margin-left: 5px;
 }
@@ -199,11 +189,9 @@ td {
     }
 }
 
-@media (max-width: 767px) {
-    .main-header .navbar .nav > li.bt-file-filter-toolbar,
-    .main-header .navbar .nav > li.bt-file-filter-status {
-        padding-right: 6px;
-        padding-left: 6px;
+@media (max-width: 1199px) {
+    .main-header .navbar .navbar-searchbar {
+        display: none;
     }
 
     .main-header .bt-file-filter-label {
@@ -224,6 +212,14 @@ td {
 
     .main-header .bt-file-filter-toggle > input {
         margin-right: 0;
+    }
+}
+
+@media (max-width: 767px) {
+    .main-header .navbar .nav > li.bt-file-filter-toolbar,
+    .main-header .navbar .nav > li.bt-file-filter-status {
+        padding-right: 6px;
+        padding-left: 6px;
     }
 
     .main-header .bt-file-filter-size {

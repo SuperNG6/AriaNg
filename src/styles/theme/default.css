@@ -63,6 +63,16 @@
     background-color: #eceff1;
 }
 
+.skin-aria-ng .main-header .bt-file-filter-size.has-error {
+    border-color: #dd4b39;
+    box-shadow: none;
+}
+
+.skin-aria-ng .main-header .bt-file-filter-size.has-error:focus {
+    border-color: #843534;
+    box-shadow: 0 0 0 1px rgba(221, 75, 57, .25);
+}
+
 .skin-aria-ng .main-header .bt-file-filter-status {
     color: #208fe5;
 }

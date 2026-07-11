@@ -1326,6 +1326,29 @@ test('renders the remembered filter and global toolbar status', function () {
     assert(read('src/langs/zh_Hant.txt').includes('format.bt-file-filter.compact=篩選 {{count}}'));
 });
 
+test('protects the filter toolbar at tablet widths and keeps invalid borders themed', function () {
+    const core = read('src/styles/core/core.css');
+    const light = read('src/styles/theme/default.css');
+    const dark = read('src/styles/theme/default-dark.css');
+    const tabletBreakpoint = core.indexOf('@media (max-width: 1199px)');
+    const tabletSearchRule = core.indexOf('.main-header .navbar .navbar-searchbar {\n        display: none;\n    }', tabletBreakpoint);
+    const tabletLabelRule = core.indexOf('.main-header .bt-file-filter-label {', tabletBreakpoint);
+    const lightNeutral = light.indexOf('.skin-aria-ng .main-header .bt-file-filter-size {');
+    const lightInvalid = light.indexOf('.skin-aria-ng .main-header .bt-file-filter-size.has-error {');
+    const lightInvalidFocus = light.indexOf('.skin-aria-ng .main-header .bt-file-filter-size.has-error:focus {');
+    const darkNeutral = dark.indexOf('.theme-dark.skin-aria-ng .main-header .bt-file-filter-size {');
+    const darkInvalid = dark.indexOf('.theme-dark.skin-aria-ng .main-header .bt-file-filter-size.has-error {');
+    const darkInvalidFocus = dark.indexOf('.theme-dark.skin-aria-ng .main-header .bt-file-filter-size.has-error:focus {');
+
+    assert(tabletBreakpoint >= 0);
+    assert(tabletSearchRule > tabletBreakpoint);
+    assert(tabletLabelRule > tabletBreakpoint);
+    assert(lightInvalid > lightNeutral);
+    assert(lightInvalidFocus > lightInvalid);
+    assert(darkInvalid > darkNeutral);
+    assert(darkInvalidFocus > darkInvalid);
+});
+
 let failed = 0;
 
 tests.forEach(function (item) {
