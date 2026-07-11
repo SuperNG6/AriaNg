@@ -67,7 +67,7 @@
   "version": "1.3.15",
   "main": "index.html",
   "scripts": {
-    "test": "node test/task-list-file-list.test.js && node test/release-workflow.test.js",
+    "test": "node test/task-list-file-list.test.js && node test/release-workflow.test.js && node test/new-task-small-file-filter.test.js",
     "build": "gulp clean build"
   },
   "browsers": [

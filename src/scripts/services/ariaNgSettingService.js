@@ -712,6 +712,29 @@
             setShowFileListInTaskListPage: function (value) {
                 setOption('showFileListInTaskListPage', !!value);
             },
+            getBtFileFilterEnabled: function () {
+                return !!getOption('btFileFilterEnabled');
+            },
+            setBtFileFilterEnabled: function (value) {
+                setOption('btFileFilterEnabled', !!value);
+            },
+            getBtFileFilterMinSizeMb: function () {
+                return parseInt(getOption('btFileFilterMinSizeMb'));
+            },
+            setBtFileFilterMinSizeMb: function (value) {
+                var parsedValue = Number(value);
+
+                if (parsedValue !== Math.floor(parsedValue) || parsedValue < 1 || parsedValue > 102400) {
+                    return;
+                }
+
+                setOption('btFileFilterMinSizeMb', parsedValue);
+            },
+            getCurrentRpcIdentity: function () {
+                var options = this.getAllOptions();
+
+                return [options.protocol, options.rpcHost, options.rpcPort, options.rpcInterface].join('|');
+            },
             getFileListDisplayOrder: function () {
                 var value = getOption('fileListDisplayOrder');
 
