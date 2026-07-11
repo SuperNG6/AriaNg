@@ -229,6 +229,7 @@
         $scope.startDownload = function (pauseOnAdded) {
             var requestedPauseOnAdded = !!pauseOnAdded;
             var filterIntent = angular.copy($scope.getBtFileFilterIntent());
+            var submissionTaskType = $scope.context.taskType;
             var responseCallback = function (response) {
                 if (!response.hasSuccess && !response.success) {
                     return;
@@ -248,7 +249,7 @@
                                 });
                             }
                         }
-                    } else if ($scope.context.taskType === 'torrent' && response.success && response.data) {
+                    } else if (submissionTaskType === 'torrent' && response.success && response.data) {
                         ariaNgBtFileFilterService.enqueue(response.data, {
                             thresholdBytes: filterIntent.thresholdBytes,
                             startAfterFilter: !requestedPauseOnAdded,
@@ -276,11 +277,11 @@
                 }
             };
 
-            if ($scope.context.taskType === 'urls') {
+            if (submissionTaskType === 'urls') {
                 $rootScope.loadPromise = downloadByLinks(pauseOnAdded, filterIntent, responseCallback);
-            } else if ($scope.context.taskType === 'torrent') {
+            } else if (submissionTaskType === 'torrent') {
                 $rootScope.loadPromise = downloadByTorrent(filterIntent.enabled ? true : pauseOnAdded, responseCallback);
-            } else if ($scope.context.taskType === 'metalink') {
+            } else if (submissionTaskType === 'metalink') {
                 $rootScope.loadPromise = downloadByMetalink(pauseOnAdded, responseCallback);
             }
         };

@@ -338,6 +338,8 @@ const loadNewTaskController = function (options) {
     const metalinkCalls = [];
     const enqueued = [];
     const paths = [];
+    let torrentCallback;
+    let metalinkCallback;
     const module = {
         controller: function (name, definition) {
             controllerDefinition = definition;
@@ -377,6 +379,7 @@ const loadNewTaskController = function (options) {
         },
         newTorrentTask: function (task, pauseOnAdded, callback) {
             torrentCalls.push({task: task, pauseOnAdded: pauseOnAdded});
+            torrentCallback = callback;
             if (options.torrentResponse) {
                 callback(options.torrentResponse);
             }
@@ -384,6 +387,7 @@ const loadNewTaskController = function (options) {
         },
         newMetalinkTask: function (task, pauseOnAdded, callback) {
             metalinkCalls.push({task: task, pauseOnAdded: pauseOnAdded});
+            metalinkCallback = callback;
             return 'metalink-promise';
         }
     };
@@ -432,7 +436,9 @@ const loadNewTaskController = function (options) {
         torrentCalls: torrentCalls,
         metalinkCalls: metalinkCalls,
         enqueued: enqueued,
-        paths: paths
+        paths: paths,
+        respondTorrent: function (response) { torrentCallback(response); },
+        respondMetalink: function (response) { metalinkCallback(response); }
     };
 };
 
@@ -565,6 +571,36 @@ test('forces local torrents paused while filtering and enqueues the returned GID
         startAfterFilter: true,
         sourceType: 'torrent'
     }}]);
+});
+
+test('enqueues a delayed local torrent response after the form switches to Metalink', function () {
+    const context = loadNewTaskController({
+        taskType: 'torrent',
+        filterIntent: {enabled: true, thresholdBytes: 104857600}
+    });
+
+    context.scope.startDownload(false);
+    context.scope.context.taskType = 'metalink';
+    context.respondTorrent({success: true, data: 'torrent-gid'});
+
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.enqueued)), [{gid: 'torrent-gid', intent: {
+        thresholdBytes: 104857600,
+        startAfterFilter: true,
+        sourceType: 'torrent'
+    }}]);
+});
+
+test('never enqueues a delayed Metalink response after the form switches to torrent', function () {
+    const context = loadNewTaskController({
+        taskType: 'metalink',
+        filterIntent: {enabled: true, thresholdBytes: 104857600}
+    });
+
+    context.scope.startDownload(false);
+    context.scope.context.taskType = 'torrent';
+    context.respondMetalink({success: true, data: 'metalink-gid'});
+
+    assert.deepStrictEqual(context.enqueued, []);
 });
 
 test('leaves disabled URI, torrent, and Metalink submissions unchanged', function () {
