@@ -90,7 +90,15 @@ jobs:
             fi
           fi
 
+          RELEASE_NOTES_FILE="docs/releases/${VERSION}.md"
+
+          if [[ ! -f "$RELEASE_NOTES_FILE" ]]; then
+            echo "Release notes file $RELEASE_NOTES_FILE not found." >&2
+            exit 1
+          fi
+
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_NOTES_FILE=$RELEASE_NOTES_FILE" >> "$GITHUB_ENV"
 
       - name: Build standard archive
         shell: bash
@@ -160,7 +168,7 @@ jobs:
             "release/AriaNg-${VERSION}-AllInOne.zip" \
             --verify-tag \
             --title "AriaNg ${VERSION}" \
-            --generate-notes
+            --notes-file "$RELEASE_NOTES_FILE"
 
       - name: Create tag and publish manual release
         if: github.event_name == 'workflow_dispatch'
@@ -171,4 +179,4 @@ jobs:
             "release/AriaNg-${VERSION}-AllInOne.zip" \
             --target "$GITHUB_SHA" \
             --title "AriaNg ${VERSION}" \
-            --generate-notes
+            --notes-file "$RELEASE_NOTES_FILE"
