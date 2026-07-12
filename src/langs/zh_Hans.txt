@@ -39,6 +39,7 @@ Help=帮助
 Exclude BT task files smaller than=排除 BT 任务中小于
 BT file filter suffix=的文件
 BT file filter threshold=BT 任务文件排除阈值（MB）
+BT file filter size error=请输入 1–102400
 format.bt-file-filter.resuming=正在恢复 {{count}} 个尚未完成小文件处理的 BT 任务
 format.bt-file-filter.processing=正在排除 BT 任务中的小文件：已处理 {{processed}}/{{total}} 个任务
 format.bt-file-filter.waiting=正在等待 {{count}} 个 BT 任务的文件列表

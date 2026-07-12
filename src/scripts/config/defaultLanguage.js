@@ -43,6 +43,7 @@
             'Exclude BT task files smaller than': 'Exclude BT task files smaller than',
             'BT file filter suffix': '',
             'BT file filter threshold': 'BT file exclusion threshold in MB',
+            'BT file filter size error': 'Enter 1–102400',
             'format.bt-file-filter.resuming': 'Resuming small-file processing for {{count}} unfinished BT tasks',
             'format.bt-file-filter.processing': 'Excluding small files from BT tasks: {{processed}}/{{total}} tasks processed',
             'format.bt-file-filter.waiting': 'Waiting for file lists from {{count}} BT tasks',

@@ -96,13 +96,23 @@ td {
 .main-header .navbar .nav > li.bt-file-filter-status {
     align-items: center;
     height: 50px;
-    padding: 0 10px;
     vertical-align: top;
 }
 
 .main-header .navbar .nav > li.bt-file-filter-toolbar {
     display: inline-flex;
+    padding: 0 8px;
     white-space: nowrap;
+}
+
+.main-header .bt-file-filter-rule {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+    padding: 4px 10px;
+    border-left: 3px solid transparent;
+    border-radius: 4px;
+    transition: color .15s ease, background-color .15s ease, border-color .15s ease, box-shadow .15s ease;
 }
 
 .main-header .bt-file-filter-toggle {
@@ -130,9 +140,19 @@ td {
     margin-left: 5px;
 }
 
+.main-header .bt-file-filter-suffix {
+    margin-left: 5px;
+}
+
+.main-header .bt-file-filter-error {
+    margin-left: 8px;
+    font-size: 11px;
+}
+
 .main-header .navbar .nav > li.bt-file-filter-status {
     display: inline-flex;
     max-width: 360px;
+    padding: 0 10px;
     white-space: nowrap;
 }
 
@@ -193,26 +213,6 @@ td {
     .main-header .navbar.bt-file-filter-active .navbar-searchbar {
         display: none;
     }
-
-    .main-header .bt-file-filter-label {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        padding: 0;
-        margin: -1px;
-        overflow: hidden;
-        clip: rect(0, 0, 0, 0);
-        white-space: nowrap;
-        border: 0;
-    }
-
-    .main-header .bt-file-filter-toggle {
-        margin-right: 2px;
-    }
-
-    .main-header .bt-file-filter-toggle > input {
-        margin-right: 0;
-    }
 }
 
 @media (min-width: 768px) and (max-width: 899px) {
@@ -222,7 +222,24 @@ td {
 }
 
 @media (max-width: 767px) {
-    .main-header .navbar .nav > li.bt-file-filter-toolbar,
+    .main-header .navbar .navbar-toolbar > .navbar-nav {
+        display: flex;
+        flex-wrap: wrap;
+    }
+
+    .main-header .navbar .nav > li.bt-file-filter-toolbar {
+        flex-basis: 100%;
+        min-width: 0;
+        height: auto;
+        padding: 4px 6px 7px 37px;
+    }
+
+    .main-header .bt-file-filter-rule {
+        flex-wrap: wrap;
+        max-width: 100%;
+        min-height: 38px;
+    }
+
     .main-header .navbar .nav > li.bt-file-filter-status {
         padding-right: 6px;
         padding-left: 6px;

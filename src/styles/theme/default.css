@@ -48,8 +48,28 @@
 }
 
 .skin-aria-ng .main-header .bt-file-filter-toolbar {
-    color: #606060;
     border-left: 1px solid #e1e1e1;
+}
+
+.skin-aria-ng .main-header .bt-file-filter-rule {
+    color: #9aa1a7;
+    background-color: #f3f4f5;
+    box-shadow: none;
+}
+
+.skin-aria-ng .main-header .bt-file-filter-rule.is-enabled {
+    color: #606060;
+    background-color: #fff;
+    border-left-color: #2196f3;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .1);
+}
+
+.skin-aria-ng .main-header .bt-file-filter-rule.has-error {
+    border-left-color: #dd4b39;
+}
+
+.skin-aria-ng .main-header .bt-file-filter-error {
+    color: #c34737;
 }
 
 .skin-aria-ng .main-header .bt-file-filter-size {

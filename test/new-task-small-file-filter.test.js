@@ -2302,25 +2302,31 @@ test('find shortcut only consumes the event while search is visible', function (
     assert.strictEqual(hidden.getFocusCount(), 0);
 });
 
-test('keeps the filter label compact and invalid borders themed', function () {
+test('styles the BT filter as an accessible grouped rule in every state', function () {
+    const index = read('src/index.html');
     const core = read('src/styles/core/core.css');
     const light = read('src/styles/theme/default.css');
     const dark = read('src/styles/theme/default-dark.css');
-    const tabletBreakpoint = core.indexOf('@media (max-width: 1199px)');
-    const tabletLabelRule = core.indexOf('.main-header .bt-file-filter-label {', tabletBreakpoint);
-    const lightNeutral = light.indexOf('.skin-aria-ng .main-header .bt-file-filter-size {');
-    const lightInvalid = light.indexOf('.skin-aria-ng .main-header .bt-file-filter-size.has-error {');
-    const lightInvalidFocus = light.indexOf('.skin-aria-ng .main-header .bt-file-filter-size.has-error:focus {');
-    const darkNeutral = dark.indexOf('.theme-dark.skin-aria-ng .main-header .bt-file-filter-size {');
-    const darkInvalid = dark.indexOf('.theme-dark.skin-aria-ng .main-header .bt-file-filter-size.has-error {');
-    const darkInvalidFocus = dark.indexOf('.theme-dark.skin-aria-ng .main-header .bt-file-filter-size.has-error:focus {');
+    const mobileBreakpoint = core.indexOf('@media (max-width: 767px)');
+    const mobileRule = core.indexOf('.main-header .bt-file-filter-rule {', mobileBreakpoint);
 
-    assert(tabletBreakpoint >= 0);
-    assert(tabletLabelRule > tabletBreakpoint);
-    assert(lightInvalid > lightNeutral);
-    assert(lightInvalidFocus > lightInvalid);
-    assert(darkInvalid > darkNeutral);
-    assert(darkInvalidFocus > darkInvalid);
+    assert(index.includes('class="bt-file-filter-rule"'));
+    assert(index.includes("'is-enabled': btFileFilterContext.enabled"));
+    assert(index.includes("'has-error': btFileFilterContext.enabled && !isBtFileFilterValid()"));
+    assert(index.includes('class="bt-file-filter-error"'));
+    assert(index.includes('ng-if="btFileFilterContext.enabled && !isBtFileFilterValid()"'));
+    assert(index.includes('role="alert"'));
+    assert(core.includes('.main-header .bt-file-filter-rule'));
+    assert(core.includes('.main-header .bt-file-filter-error'));
+    assert(mobileBreakpoint >= 0);
+    assert(core.includes('flex-basis: 100%'));
+    assert(mobileRule > mobileBreakpoint);
+    assert(core.indexOf('flex-wrap: wrap;', mobileRule) > mobileRule);
+    assert(core.indexOf('max-width: 100%;', mobileRule) > mobileRule);
+    assert(light.includes('.skin-aria-ng .main-header .bt-file-filter-rule.is-enabled'));
+    assert(light.includes('.skin-aria-ng .main-header .bt-file-filter-rule.has-error'));
+    assert(dark.includes('.theme-dark.skin-aria-ng .main-header .bt-file-filter-rule.is-enabled'));
+    assert(dark.includes('.theme-dark.skin-aria-ng .main-header .bt-file-filter-rule.has-error'));
 });
 
 let failed = 0;

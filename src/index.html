@@ -170,19 +170,25 @@
                         </a>
                     </li>
                     <li class="bt-file-filter-toolbar" ng-if="isNewTaskPage()">
-                        <label class="bt-file-filter-toggle" title="{{'BT file filter cleanup warning' | translate}}">
-                            <input type="checkbox" ng-model="btFileFilterContext.enabled"
-                                   ng-change="saveBtFileFilterSetting()"/>
-                            <span class="bt-file-filter-label" translate>Exclude BT task files smaller than</span>
-                        </label>
-                        <input class="form-control bt-file-filter-size" type="number" min="1" max="102400" step="1"
-                               ng-model="btFileFilterContext.minSizeMb" ng-disabled="!btFileFilterContext.enabled"
-                               ng-change="saveBtFileFilterSetting()"
-                               ng-class="{'has-error': btFileFilterContext.enabled && !isBtFileFilterValid()}"
-                               aria-label="{{'BT file filter threshold' | translate}}"
-                               aria-invalid="{{btFileFilterContext.enabled && !isBtFileFilterValid()}}"/>
-                        <span class="bt-file-filter-unit">MB</span>
-                        <span class="bt-file-filter-suffix" translate>BT file filter suffix</span>
+                        <div class="bt-file-filter-rule"
+                             ng-class="{'is-enabled': btFileFilterContext.enabled, 'has-error': btFileFilterContext.enabled && !isBtFileFilterValid()}">
+                            <label class="bt-file-filter-toggle" title="{{'BT file filter cleanup warning' | translate}}">
+                                <input type="checkbox" ng-model="btFileFilterContext.enabled"
+                                       ng-change="saveBtFileFilterSetting()"/>
+                                <span class="bt-file-filter-label" translate>Exclude BT task files smaller than</span>
+                            </label>
+                            <input class="form-control bt-file-filter-size" type="number" min="1" max="102400" step="1"
+                                   ng-model="btFileFilterContext.minSizeMb" ng-disabled="!btFileFilterContext.enabled"
+                                   ng-change="saveBtFileFilterSetting()"
+                                   ng-class="{'has-error': btFileFilterContext.enabled && !isBtFileFilterValid()}"
+                                   aria-label="{{'BT file filter threshold' | translate}}"
+                                   aria-invalid="{{btFileFilterContext.enabled && !isBtFileFilterValid()}}"/>
+                            <span class="bt-file-filter-unit">MB</span>
+                            <span class="bt-file-filter-suffix" translate>BT file filter suffix</span>
+                            <span class="bt-file-filter-error" role="alert"
+                                  ng-if="btFileFilterContext.enabled && !isBtFileFilterValid()"
+                                  translate>BT file filter size error</span>
+                        </div>
                     </li>
                     <li ng-if="isTaskListPage()" ng-class="{'active': isTaskListFileListEnabled()}">
                         <a class="toolbar" title="{{'Files' | translate}}" ng-click="toggleTaskListFileList()">
