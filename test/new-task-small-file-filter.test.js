@@ -2329,6 +2329,32 @@ test('styles the BT filter as an accessible grouped rule in every state', functi
     assert(dark.includes('.theme-dark.skin-aria-ng .main-header .bt-file-filter-rule.has-error'));
 });
 
+test('keeps the operable disabled BT filter text at accessible contrast', function () {
+    const light = read('src/styles/theme/default.css');
+    const rule = light.match(/\.skin-aria-ng \.main-header \.bt-file-filter-rule \{([^}]+)\}/);
+
+    assert(rule);
+
+    const color = rule[1].match(/color:\s*(#[0-9a-f]{6})/i)[1].toLowerCase();
+    const background = rule[1].match(/background-color:\s*(#[0-9a-f]{6})/i)[1].toLowerCase();
+    const luminance = function (hex) {
+        const channels = [1, 3, 5].map(function (offset) {
+            const value = parseInt(hex.substr(offset, 2), 16) / 255;
+            return value <= 0.03928 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+        });
+
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    };
+    const foregroundLuminance = luminance(color);
+    const backgroundLuminance = luminance(background);
+    const contrast = (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+        (Math.min(foregroundLuminance, backgroundLuminance) + 0.05);
+
+    assert(contrast >= 4.5, 'disabled operable filter contrast was ' + contrast.toFixed(2) + ':1');
+    assert.strictEqual(color, '#687078');
+    assert.strictEqual(background, '#f3f4f5');
+});
+
 let failed = 0;
 
 tests.forEach(function (item) {
