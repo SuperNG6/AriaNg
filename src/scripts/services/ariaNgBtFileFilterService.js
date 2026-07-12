@@ -783,23 +783,30 @@
                 job.missingRootScanCount = 0;
                 touchAndSave(job);
             }
+
+            var isMetadataRoot = !job.childGid &&
+                (job.sourceType === 'magnet' || job.sourceType === 'remote-torrent');
             if (job.stage.indexOf('starting-') === 0) {
                 processStartingJob(job, task, rpcIdentity);
-            } else if (task.bittorrent && task.files && task.files.length > 0) {
-                processBtTask(job, task, rpcIdentity);
-            } else if (task.followedBy && task.followedBy.length === 1) {
+            } else if (isMetadataRoot && task.followedBy && task.followedBy.length === 1) {
                 job.childGid = task.followedBy[0];
                 job.stage = 'waiting-files';
                 job.terminalChildScanCount = 0;
                 touchAndSave(job);
                 finishTick();
-            } else if (task.followedBy && task.followedBy.length > 1) {
+            } else if (isMetadataRoot && task.followedBy && task.followedBy.length > 1) {
                 job.stage = 'waiting-metadata';
                 job.terminalChildScanCount = 0;
                 touchAndSave(job);
                 finishTick();
-            } else if (!job.childGid && (task.status === 'complete' || task.status === 'error')) {
+            } else if (isMetadataRoot && (task.status === 'complete' || task.status === 'error')) {
                 recoverMetadataChild(job, rpcIdentity, task.status);
+            } else if (isMetadataRoot) {
+                job.stage = 'waiting-metadata';
+                touchAndSave(job);
+                finishTick();
+            } else if (task.bittorrent && task.files && task.files.length > 0) {
+                processBtTask(job, task, rpcIdentity);
             } else {
                 job.stage = 'waiting-metadata';
                 touchAndSave(job);
@@ -819,10 +826,6 @@
             }
 
             tickInProgress = true;
-            setVisibleStatus('processing', 'format.bt-file-filter.processing', {
-                processed: aggregate.processed,
-                total: aggregate.total
-            });
             var job = currentJobs[pollCursor % currentJobs.length];
             pollCursor++;
             var rpcIdentity = getCurrentRpcIdentity();

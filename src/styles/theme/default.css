@@ -402,6 +402,10 @@
     margin-right: 4px;
 }
 
+.skin-aria-ng .new-task-download-path > label {
+    color: #707070;
+}
+
 .skin-aria-ng .nav-tabs-custom > .nav-tabs > li > a {
     color: #aaa;
     border: 0;

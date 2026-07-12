@@ -94,6 +94,10 @@
     border-color: #666;
 }
 
+.theme-dark.skin-aria-ng .new-task-download-path > label {
+    color: #ddd;
+}
+
 .theme-dark.skin-aria-ng .nav-tabs-custom>.tab-content {
     background-color: #1a1a1a;
 }

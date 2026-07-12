@@ -308,8 +308,9 @@ In `src/styles/core/core.css`, keep structural rules theme-neutral:
 
     .main-header .navbar .nav > li.bt-file-filter-toolbar {
         flex-basis: 100%;
+        justify-content: flex-start;
         height: auto;
-        padding: 4px 6px 7px 37px;
+        padding: 4px 6px 7px;
     }
 
     .main-header .bt-file-filter-rule {

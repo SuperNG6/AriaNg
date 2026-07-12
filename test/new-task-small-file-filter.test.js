@@ -453,6 +453,7 @@ const loadNewTaskController = function (options) {
     const metalinkCalls = [];
     const enqueued = [];
     const paths = [];
+    const savedDownloadPaths = [];
     let torrentCallback;
     let metalinkCallback;
     const module = {
@@ -525,13 +526,28 @@ const loadNewTaskController = function (options) {
         'ariaNgFileService': {},
         'ariaNgSettingService': {
             getAfterCreatingNewTask: function () { return 'task-list'; },
-            getKeyboardShortcuts: function () { return !!options.keyboardShortcuts; }
+            getKeyboardShortcuts: function () { return !!options.keyboardShortcuts; },
+            getCurrentRpcIdentity: function () { return options.rpcIdentity || 'http|localhost|6800|jsonrpc'; }
         },
         'ariaNgBtFileFilterService': filterService,
         'aria2TaskService': taskService,
         'aria2SettingService': {
             getNewTaskOptionKeys: function () { return []; },
-            getSpecifiedOptions: function () { return {}; }
+            getSpecifiedOptions: function () { return {}; },
+            getSettingHistory: function (key, scope) {
+                if (key === 'dir' && scope === (options.rpcIdentity || 'http|localhost|6800|jsonrpc')) {
+                    return options.downloadPathHistory || [];
+                }
+
+                if (key === 'dir' && !scope) {
+                    return options.legacyDownloadPathHistory || [];
+                }
+
+                return [];
+            },
+            addSettingHistory: function (key, value, scope) {
+                savedDownloadPaths.push({key: key, value: value, scope: scope});
+            }
         }
     };
     const names = controllerDefinition.slice(0, -1);
@@ -539,7 +555,9 @@ const loadNewTaskController = function (options) {
         return dependencies[name];
     }));
     scope.context.urls = options.urls || '';
-    scope.context.options = options.taskOptions || {};
+    if (options.taskOptions) {
+        scope.context.options = options.taskOptions;
+    }
     if (options.taskType) {
         scope.context.taskType = options.taskType;
         scope.context.uploadFile = {base64Content: 'torrent-content'};
@@ -552,6 +570,7 @@ const loadNewTaskController = function (options) {
         metalinkCalls: metalinkCalls,
         enqueued: enqueued,
         paths: paths,
+        savedDownloadPaths: savedDownloadPaths,
         respondTorrent: function (response) { torrentCallback(response); },
         respondMetalink: function (response) { metalinkCallback(response); }
     };
@@ -640,6 +659,58 @@ test('adds magnets for metadata discovery while preserving Download Later for or
     assert.strictEqual(context.uriTasks[0].btFileFilterCandidate, true);
     assert.strictEqual(context.uriTasks[1].pauseOnAdded, true);
     assert.strictEqual(context.uriTasks[1].options['pause-metadata'], undefined);
+});
+
+test('restores and updates the last download path for the current RPC', function () {
+    const rpcIdentity = 'https|downloads.example|443|jsonrpc';
+    const context = loadNewTaskController({
+        urls: 'https://host/file.iso',
+        rpcIdentity: rpcIdentity,
+        downloadPathHistory: ['/downloads/movies']
+    });
+
+    assert.strictEqual(context.scope.context.options.dir, '/downloads/movies');
+
+    context.scope.startDownload(false);
+
+    assert.strictEqual(context.uriTasks[0].options.dir, '/downloads/movies');
+    assert.deepStrictEqual(context.savedDownloadPaths, [{
+        key: 'dir',
+        value: '/downloads/movies',
+        scope: undefined
+    }, {
+        key: 'dir',
+        value: '/downloads/movies',
+        scope: rpcIdentity
+    }]);
+});
+
+test('falls back to the existing unscoped download path history after upgrade', function () {
+    const context = loadNewTaskController({
+        legacyDownloadPathHistory: ['/downloads/legacy']
+    });
+
+    assert.strictEqual(context.scope.context.options.dir, '/downloads/legacy');
+});
+
+test('binds remembered new-task options into their visible inputs', function () {
+    const newTaskView = read('src/views/new.html');
+    const newTaskStyles = read('src/styles/controls/new-task-table.css');
+    const settingDirective = read('src/scripts/directives/setting.js');
+
+    assert(newTaskView.includes('model-value="context.options[option.key]"'));
+    assert(!newTaskView.includes('ng-model="context.options[option.key]"'));
+    assert(newTaskView.includes('class="new-task-download-path"'));
+    assert(newTaskView.includes('ng-model="context.options.dir"'));
+    assert(newTaskView.includes("ng-bind=\"'options.dir.name' | translate\""));
+    assert(newTaskStyles.includes('.new-task-download-path'));
+    assert(newTaskStyles.includes('@media (max-width: 991px)'));
+    assert(settingDirective.includes("scope.$watch('modelValue', syncExternalValue)"));
+    assert(settingDirective.includes("scope.$watch('ngModel', syncExternalValue)"));
+    assert(settingDirective.includes('externalValueInitialized'));
+    assert(settingDirective.includes('scope.optionValue = undefined;'));
+    assert(settingDirective.includes('scope.optionValue = displayValue;'));
+    assert(!settingDirective.includes('return ngModel.$viewValue;'));
 });
 
 test('enqueues only successful URI metadata candidates with the snapshotted intent', function () {
@@ -955,7 +1026,9 @@ test('rejects duplicate jobs and exposes a stable idle status object', function 
 test('follows metadata child, filters mixed files, enables cleanup, and starts Download Now', function () {
     const context = loadFilterService({
         tasks: {
-            root: {gid: 'root', status: 'complete', followedBy: ['child']},
+            root: {gid: 'root', status: 'complete', followedBy: ['child'], bittorrent: {}, files: [
+                {index: '1', path: '[METADATA]hash', length: '17717', selected: 'true'}
+            ]},
             child: {gid: 'child', status: 'paused', bittorrent: {mode: 'multi'}, files: [
                 {index: '1', length: '1048576', selected: 'true'},
                 {index: '2', length: '209715200', selected: 'true'}
@@ -974,6 +1047,29 @@ test('follows metadata child, filters mixed files, enables cleanup, and starts D
     }]);
     assert.deepStrictEqual(context.startedGids, ['child']);
     assert.strictEqual(context.getSavedQueue().length, 0);
+});
+
+test('does not mistake an active magnet metadata file for the final BT task', function () {
+    const context = loadFilterService({tasks: {
+        root: {gid: 'root', status: 'active', bittorrent: {}, files: [
+            {index: '1', path: '[METADATA]hash', length: '0', selected: 'true'}
+        ]}
+    }});
+
+    context.service.enqueue('root', {
+        thresholdBytes: 104857600,
+        startAfterFilter: true,
+        sourceType: 'magnet'
+    });
+    context.service.start();
+    context.tick();
+
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    assert.strictEqual(context.getSavedQueue()[0].stage, 'waiting-metadata');
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(context.service.getStatus().filtered, 0);
+    assert.strictEqual(context.service.getStatus().full, 0);
 });
 
 test('silently removes a job when aggregate unpause reports a nested missing GID', function () {
@@ -1444,6 +1540,8 @@ test('polling never overlaps while a task status request is pending', function (
     context.service.start();
 
     context.tick();
+    assert.strictEqual(context.service.getStatus().type, 'waiting');
+    assert.strictEqual(context.service.getStatus().textKey, 'format.bt-file-filter.waiting');
     context.tick();
     assert.deepStrictEqual(context.statusGids, ['root']);
 
@@ -1749,9 +1847,14 @@ test('persists completed batch outcomes across reload until the last job settles
 
     const second = loadFilterService({
         savedQueue: persisted,
-        tasks: {waiting: {gid: 'waiting', status: 'paused', bittorrent: {}, files: [
-            {index: '1', length: '200', selected: 'true'}
-        ]}}
+        tasks: {
+            waiting: {gid: 'waiting', status: 'complete', followedBy: ['waiting-child'], bittorrent: {}, files: [
+                {index: '1', path: '[METADATA]hash', length: '100', selected: 'true'}
+            ]},
+            'waiting-child': {gid: 'waiting-child', following: 'waiting', status: 'paused', bittorrent: {}, files: [
+                {index: '1', length: '200', selected: 'true'}
+            ]}
+        }
     });
     second.service.start();
     second.tickUntilIdle();
@@ -1796,7 +1899,10 @@ test('preserves completed outcomes through an RPC switch round trip', function (
     context.service.enqueue('other', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'torrent'});
     context.tickUntilIdle();
 
-    tasks.waiting = {gid: 'waiting', status: 'paused', bittorrent: {}, files: [
+    tasks.waiting = {gid: 'waiting', status: 'complete', followedBy: ['waiting-child'], bittorrent: {}, files: [
+        {index: '1', path: '[METADATA]hash', length: '100', selected: 'true'}
+    ]};
+    tasks['waiting-child'] = {gid: 'waiting-child', following: 'waiting', status: 'paused', bittorrent: {}, files: [
         {index: '1', length: '200', selected: 'true'}
     ]};
     context.setRpcIdentity('rpc-a');
@@ -2272,17 +2378,24 @@ test('compact filter status reports the count appropriate to each lifecycle stat
     assert(simplifiedChinese.includes('format.bt-file-filter.compact.warning=已回退 {{count}}'));
 });
 
+test('keeps the full filter status while the desktop toolbar still has room', function () {
+    const core = read('src/styles/core/core.css');
+
+    assert(!core.includes('@media (min-width: 992px) and (max-width: 1399px)'));
+    assert(core.includes('@media (max-width: 991px)'));
+});
+
 test('scopes tablet search hiding to active filter controls or status', function () {
     const index = read('src/index.html');
     const core = read('src/styles/core/core.css');
-    const tabletBreakpoint = core.indexOf('@media (max-width: 1199px)');
+    const toolbarBreakpoint = core.indexOf('@media (max-width: 1399px)');
     const globalSearchRule = '.main-header .navbar .navbar-searchbar {\n        display: none;\n    }';
     const scopedSearchRule = '.main-header .navbar.bt-file-filter-active .navbar-searchbar {';
 
     assert(index.includes("ng-class=\"{'bt-file-filter-active': isNewTaskPage() || btFileFilterStatus.visible}\""));
-    assert(tabletBreakpoint >= 0);
-    assert.strictEqual(core.indexOf(globalSearchRule, tabletBreakpoint), -1);
-    assert(core.indexOf(scopedSearchRule, tabletBreakpoint) > tabletBreakpoint);
+    assert(toolbarBreakpoint >= 0);
+    assert.strictEqual(core.indexOf(globalSearchRule, toolbarBreakpoint), -1);
+    assert(core.indexOf(scopedSearchRule, toolbarBreakpoint) > toolbarBreakpoint);
 });
 
 test('keeps inactive task search compact at the narrow tablet boundary', function () {
@@ -2315,6 +2428,8 @@ test('styles the BT filter as an accessible grouped rule in every state', functi
     const light = read('src/styles/theme/default.css');
     const dark = read('src/styles/theme/default-dark.css');
     const mobileBreakpoint = core.indexOf('@media (max-width: 767px)');
+    const mobileGroupRuleStart = core.indexOf('.main-header .navbar .nav > li.bt-file-filter-group.has-filter-rule {', mobileBreakpoint);
+    const mobileGroupRule = core.slice(mobileGroupRuleStart, core.indexOf('}', mobileGroupRuleStart));
     const mobileRule = core.indexOf('.main-header .bt-file-filter-rule {', mobileBreakpoint);
 
     assert(index.includes('class="bt-file-filter-rule"'));
@@ -2326,7 +2441,13 @@ test('styles the BT filter as an accessible grouped rule in every state', functi
     assert(core.includes('.main-header .bt-file-filter-rule'));
     assert(core.includes('.main-header .bt-file-filter-error'));
     assert(mobileBreakpoint >= 0);
-    assert(core.includes('flex-basis: 100%'));
+    assert(index.includes('class="bt-file-filter-group"'));
+    assert(mobileGroupRuleStart > mobileBreakpoint);
+    assert(mobileGroupRule.includes('flex-basis: 100%;'));
+    assert(mobileGroupRule.includes('justify-content: flex-start;'));
+    assert(!mobileGroupRule.includes('padding: 4px 6px 7px 37px;'));
+    assert(core.includes('.bt-file-filter-group.has-filter-rule .bt-file-filter-status'));
+    assert(core.includes('min-height: 38px;'));
     assert(mobileRule > mobileBreakpoint);
     assert(core.indexOf('flex-wrap: wrap;', mobileRule) > mobileRule);
     assert(core.indexOf('max-width: 100%;', mobileRule) > mobileRule);
@@ -2360,6 +2481,17 @@ test('keeps the operable disabled BT filter text at accessible contrast', functi
     assert(contrast >= 4.5, 'disabled operable filter contrast was ' + contrast.toFixed(2) + ':1');
     assert.strictEqual(color, '#687078');
     assert.strictEqual(background, '#f3f4f5');
+});
+
+test('keeps fixed content below a dynamically wrapping mobile header', function () {
+    const fixScript = read('src/scripts/core/__fix.js');
+
+    assert(fixScript.includes('header.outerHeight()'));
+    assert(fixScript.includes("document.querySelector('.main-header .navbar-toolbar > .navbar-nav')"));
+    assert(fixScript.includes('toolbar.getBoundingClientRect().bottom'));
+    assert(fixScript.includes("css('padding-top', headerHeight)"));
+    assert(fixScript.includes('window.ResizeObserver'));
+    assert(!fixScript.includes('setInterval'));
 });
 
 let failed = 0;

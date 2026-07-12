@@ -10,12 +10,14 @@
             scope: {
                 option: '=',
                 ngModel: '=',
+                modelValue: '=?',
                 defaultValue: '=?',
                 fixedValue: '=?',
                 onChangeValue: '&'
             },
             link: function (scope, element, attrs, ngModel) {
                 var pendingSaveRequest = null;
+                var externalValueInitialized = false;
                 var options = {
                     showPlaceholderCount: false,
                     deleteKeyAlwaysChangeValue: false,
@@ -290,12 +292,25 @@
                     return $q.resolve(result);
                 };
 
-                if (ngModel) {
-                    scope.$watch(function () {
-                        return ngModel.$viewValue;
-                    }, function (value) {
-                        scope.optionValue = getHumanReadableValue(value);
-                    });
+                var syncExternalValue = function (value) {
+                    var displayValue = getHumanReadableValue(value);
+
+                    if (!externalValueInitialized) {
+                        externalValueInitialized = true;
+                        scope.optionValue = undefined;
+                        $timeout(function () {
+                            scope.optionValue = displayValue;
+                        }, 0);
+                        return;
+                    }
+
+                    scope.optionValue = displayValue;
+                };
+
+                if (angular.isDefined(attrs.modelValue)) {
+                    scope.$watch('modelValue', syncExternalValue);
+                } else if (ngModel) {
+                    scope.$watch('ngModel', syncExternalValue);
                 }
 
                 scope.$watch('option', function () {

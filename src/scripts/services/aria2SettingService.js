@@ -16,8 +16,14 @@
             return stat;
         };
 
-        var getSettingHistoryKey = function (key) {
-            return ariaNgConstants.settingHistoryKeyPrefix + '.' + key;
+        var getSettingHistoryKey = function (key, scope) {
+            var storageKey = ariaNgConstants.settingHistoryKeyPrefix + '.' + key;
+
+            if (scope) {
+                storageKey += '.' + scope;
+            }
+
+            return storageKey;
         };
 
         return {
@@ -186,12 +192,12 @@
 
                 return options;
             },
-            getSettingHistory: function (key) {
+            getSettingHistory: function (key, scope) {
                 if (!this.isOptionKeyValid(key)) {
                     return [];
                 }
 
-                var storageKey = getSettingHistoryKey(key);
+                var storageKey = getSettingHistoryKey(key, scope);
                 var history = ariaNgStorageService.get(storageKey) || [];
                 var newHistory = [];
 
@@ -201,12 +207,12 @@
 
                 return newHistory;
             },
-            addSettingHistory: function (key, value) {
+            addSettingHistory: function (key, value, scope) {
                 if (!this.isOptionKeyValid(key)) {
                     return [];
                 }
 
-                var storageKey = getSettingHistoryKey(key);
+                var storageKey = getSettingHistoryKey(key, scope);
                 var history = ariaNgStorageService.get(storageKey) || [];
                 var newHistory = [];
                 newHistory.push(value);

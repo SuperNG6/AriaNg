@@ -32,6 +32,37 @@
     margin-right: 20px;
 }
 
+.new-task-download-path {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 8px;
+    padding: 5px 0;
+    vertical-align: top;
+}
+
+.new-task-download-path > label {
+    flex: 0 0 auto;
+    margin: 0 8px 0 0;
+    font-weight: 400;
+    white-space: nowrap;
+}
+
+.new-task-download-path > .form-control {
+    width: 220px;
+}
+
+@media (min-width: 992px) and (max-width: 1199px) {
+    .new-task-download-path > .form-control {
+        width: 160px;
+    }
+}
+
+@media (max-width: 991px) {
+    .new-task-download-path {
+        display: none;
+    }
+}
+
 @media (max-width: 767px) {
     .new-task-table .new-task-toollink > a {
         display: block;

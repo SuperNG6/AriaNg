@@ -2,6 +2,7 @@
 ### Yeoman template
 node_modules/
 bower_components/
+.playwright-cli/
 *.log
 
 build/

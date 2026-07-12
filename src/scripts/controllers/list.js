@@ -11,6 +11,7 @@
         var latestAppliedDownloadTaskRequestId = 0;
         var taskFileListRefreshInterval = 5000;
         var lastTaskFileListRequestTime = null;
+        var pendingWholeInfoRequestId = null;
 
         var collapsedFileDirs = {};
 
@@ -77,13 +78,25 @@
                     || currentTime - lastTaskFileListRequestTime >= taskFileListRefreshInterval);
             var requestWholeInfo = needRequestWholeInfo || refreshTaskFileList;
             var modeGeneration = downloadTaskModeGeneration;
+
+            if (pendingWholeInfoRequestId !== null) {
+                return;
+            }
+
             var requestId = ++downloadTaskRequestId;
 
             if (requestWholeInfo && showFileList && location === 'downloading') {
                 lastTaskFileListRequestTime = currentTime;
             }
+            if (requestWholeInfo) {
+                pendingWholeInfoRequestId = requestId;
+            }
 
             return aria2TaskService.getTaskList(location, requestWholeInfo, function (response) {
+                if (pendingWholeInfoRequestId === requestId) {
+                    pendingWholeInfoRequestId = null;
+                }
+
                 if (pauseDownloadTaskRefresh || modeGeneration !== downloadTaskModeGeneration || requestId <= latestAppliedDownloadTaskRequestId) {
                     return;
                 }
@@ -258,6 +271,7 @@
         $scope.$on('task-list-file-list-mode.changed', function (event, enabled) {
             downloadTaskModeGeneration++;
             needRequestWholeInfo = !!enabled;
+            pendingWholeInfoRequestId = null;
             $rootScope.loadPromise = refreshDownloadTask(false);
         });
 

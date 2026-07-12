@@ -13,6 +13,7 @@
             }
         ];
         var parameters = $location.search();
+        var downloadPathHistoryScope = ariaNgSettingService.getCurrentRpcIdentity();
 
         var getVisibleTabOrders = function () {
             var items = [];
@@ -41,6 +42,23 @@
             }
 
             aria2SettingService.addSettingHistory('dir', options.dir);
+            aria2SettingService.addSettingHistory('dir', options.dir, downloadPathHistoryScope);
+        };
+
+        var getRememberedDownloadPathOptions = function () {
+            var history = aria2SettingService.getSettingHistory('dir', downloadPathHistoryScope);
+
+            if (!history || !history.length) {
+                history = aria2SettingService.getSettingHistory('dir');
+            }
+
+            if (!history || !history.length || typeof history[0] !== 'string' || !history[0]) {
+                return {};
+            }
+
+            return {
+                dir: history[0]
+            };
         };
 
         var getDownloadTasksByLinks = function (options, pauseOnAdded, filterIntent) {
@@ -124,7 +142,7 @@
                 });
             })(),
             globalOptions: null,
-            options: {},
+            options: getRememberedDownloadPathOptions(),
             optionFilter: {
                 global: true,
                 http: false,

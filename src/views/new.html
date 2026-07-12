@@ -33,6 +33,12 @@
                             <li ng-if="context.taskType === 'urls'" class="divider"></li>
                             <li ng-if="context.taskType === 'urls'"><a class="pointer-cursor" ng-click="showExportCommandAPIModal()" translate>Export Command API</a></li>
                         </ul>
+                    </div><div class="new-task-download-path" ng-if="context.currentTab === 'links'">
+                        <label for="new-task-download-path"
+                               ng-bind="'options.dir.name' | translate">Download Path</label>
+                        <input id="new-task-download-path" class="form-control input-sm" type="text"
+                               ng-model="context.options.dir"
+                               placeholder="{{'options.dir.name' | translate}}"/>
                     </div>
                 </li>
             </ul>
@@ -83,7 +89,7 @@
                             </div>
                         </div>
                         <ng-setting ng-repeat="option in context.availableOptions" ng-if="context.optionFilter[option.category]"
-                                    option="option" show-placeholder-count="true"
+                                    option="option" model-value="context.options[option.key]" show-placeholder-count="true"
                                     lazy-save-timeout="0" delete-key-always-change-value="true"
                                     default-value="(option.overrideMode !== 'append' && !context.options[option.key] && context.options[option.key] !== '') ? context.globalOptions[option.key] : ''"
                                     fixed-value="option.overrideMode === 'append' ? context.globalOptions[option.key] : ''"

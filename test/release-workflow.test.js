@@ -11,8 +11,8 @@ const workflow = fs.readFileSync(workflowPath, 'utf8');
 const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const packageLock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
 
-assert.strictEqual(packageJson.version, '1.3.15');
-assert.strictEqual(packageLock.version, '1.3.15');
+assert.strictEqual(packageJson.version, '2.0.0');
+assert.strictEqual(packageLock.version, '2.0.0');
 
 [
     'workflow_dispatch:',
@@ -20,7 +20,7 @@ assert.strictEqual(packageLock.version, '1.3.15');
     'contents: write',
     'actions/checkout@v6',
     'actions/setup-node@v6',
-    "node-version: '20'",
+    "node-version: '24'",
     'actions/upload-artifact@v6',
     'npm ci',
     '- name: Run tests',

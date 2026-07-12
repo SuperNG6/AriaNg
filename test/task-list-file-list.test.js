@@ -109,6 +109,7 @@ const loadListController = function (route) {
     let now = 0;
     let intervalCallback;
     let nextTasks;
+    let deferNextRequest = false;
     const requests = [];
     const processCalls = [];
     const listeners = {};
@@ -178,8 +179,21 @@ const loadListController = function (route) {
         getTaskList: function (location, full, callback) {
             const tasks = nextTasks || [JSON.parse(JSON.stringify(full ? fullTask : basicTask))];
             nextTasks = null;
-            requests.push({time: now, location: location, full: full});
-            callback({success: true, context: {requestWholeInfo: full}, data: tasks});
+            const request = {
+                time: now,
+                location: location,
+                full: full,
+                respond: function () {
+                    callback({success: true, context: {requestWholeInfo: full}, data: tasks});
+                }
+            };
+            requests.push(request);
+
+            if (deferNextRequest) {
+                deferNextRequest = false;
+            } else {
+                request.respond();
+            }
         },
         processDownloadTasks: function (tasks, addVirtualFileNode) {
             processCalls.push({time: now, addVirtualFileNode: addVirtualFileNode, tasks: tasks});
@@ -233,6 +247,8 @@ const loadListController = function (route) {
             settingService.getShowFileListInTaskListPage = function () { return enabled; };
             listeners['task-list-file-list-mode.changed']({}, enabled);
         },
+        deferNextRequest: function () { deferNextRequest = true; },
+        resolveRequest: function (index) { requests[index].respond(); },
         setNextTasks: function (tasks) { nextTasks = tasks; }
     };
 };
@@ -294,6 +310,21 @@ test('throttles active file details while retaining one-second basic progress', 
 
     assert.deepStrictEqual(context.requests.map(function (request) { return request.full; }), [true, false, false, false, false, true]);
     assert.deepStrictEqual(context.requests.map(function (request) { return request.time; }), [0, 1000, 2000, 3000, 4000, 5000]);
+});
+
+test('does not let basic refreshes overtake a pending file detail refresh', function () {
+    const context = loadListController('downloading');
+
+    context.deferNextRequest();
+    context.tick(5000);
+    context.tick(1000);
+
+    assert.deepStrictEqual(context.requests.map(function (request) { return request.full; }), [true, true]);
+
+    context.resolveRequest(1);
+    context.tick(1000);
+
+    assert.deepStrictEqual(context.requests.map(function (request) { return request.full; }), [true, true, false]);
 });
 
 test('does not rebuild active virtual file trees on basic ticks', function () {
