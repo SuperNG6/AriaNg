@@ -11,6 +11,7 @@
             'completed-filtered', 'completed-full', 'completed-fallback'
         ];
         var missingRootScanLimit = 3;
+        var pollingInterval = 250;
 
         var normalizeInteger = function (value, defaultValue) {
             var number = Number(value);
@@ -172,8 +173,15 @@
                 }
             }
 
+            var mode = 'filter';
+            if (selectedIndexes.length < 1) {
+                mode = 'all-small';
+            } else if (selectedIndexes.length === allIndexes.length) {
+                mode = 'all-large';
+            }
+
             return {
-                mode: selectedIndexes.length > 0 && selectedIndexes.length < allIndexes.length ? 'filter' : 'full',
+                mode: mode,
                 selectedIndexes: selectedIndexes,
                 allIndexes: allIndexes
             };
@@ -343,13 +351,37 @@
             }
         };
 
+        var responseHasSuccess = function (response) {
+            return !!(response && (response.success || response.hasSuccess));
+        };
+
         var isNotFoundResponse = function (response) {
+            if (responseHasSuccess(response)) {
+                return false;
+            }
+
             var message = response && response.data && response.data.message;
-            return /gid.*not found|no such download.*gid/i.test(String(message || ''));
+            if (/gid.*not found|no such download.*gid/i.test(String(message || ''))) {
+                return true;
+            }
+
+            var results = response && response.results;
+            if (!Array.isArray(results)) {
+                return false;
+            }
+            for (var i = 0; i < results.length; i++) {
+                if (!responseHasSuccess(results[i])) {
+                    var resultMessage = results[i] && results[i].data && results[i].data.message;
+                    if (/gid.*not found|no such download.*gid/i.test(String(resultMessage || ''))) {
+                        return true;
+                    }
+                }
+            }
+            return false;
         };
 
         var isSuccessfulResponse = function (response) {
-            return !!(response && (response.success || response.hasSuccess));
+            return responseHasSuccess(response);
         };
 
         var sameIndexes = function (files, indexes) {
@@ -637,7 +669,7 @@
                 processRestoration(job, task, plan, rpcIdentity);
             } else if (plan.mode === 'filter') {
                 processMixedTask(job, task, plan, rpcIdentity);
-            } else if (!sameIndexes(task.files, plan.allIndexes)) {
+            } else if (plan.mode === 'all-small' && !sameIndexes(task.files, plan.allIndexes)) {
                 job.stage = 'restoring-full';
                 job.restoreAttempted = false;
                 job.restorationOutcome = 'full';
@@ -855,7 +887,7 @@
                 showOutcomeSummary();
             }
             restoredQueue = false;
-            pollingPromise = $interval(tick, 1000);
+            pollingPromise = $interval(tick, pollingInterval);
             return pollingPromise;
         };
 

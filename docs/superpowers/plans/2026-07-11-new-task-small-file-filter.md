@@ -11,13 +11,14 @@
 ## Global Constraints
 
 - Keep AriaNg deployable as a static frontend; add no server process or runtime dependency.
-- Support magnet URIs, local `.torrent` uploads, and HTTP/HTTPS URLs whose path ends in `.torrent`; do not filter ordinary direct downloads or Metalink.
+- Support magnet URIs, local `.torrent` uploads, and HTTP/HTTPS URLs whose path (excluding query and fragment) ends in `.torrent`; do not infer torrent content from response headers, and do not filter ordinary direct downloads or Metalink.
 - First-use defaults are disabled and `100 MB`; persist both values. Accept only integer values from `1` through `102400` MB.
 - Filter only files whose byte length is strictly less than `thresholdMb * 1024 * 1024`; equal-size files remain selected.
-- If every file is below the threshold or every file meets it, perform a full download. Filter only mixed-size file lists.
+- If every file is below the threshold, restore full selection when necessary and perform a full download. If every file meets it, preserve any pre-existing file selection and cleanup option because the threshold excludes nothing. Filter only mixed-size file lists.
 - A successful mixed-size filter sets `select-file` and task-local `bt-remove-unselected-file=true`; never change the global aria2 option.
-- After three failed filter attempts, reconcile and restore all file indexes plus the task's original cleanup option, then honor the original Download Now/Download Later state.
-- Pending jobs are isolated by a stable RPC endpoint identity and resume only in the same browser against the same endpoint.
+- After three failed filter attempts, reconcile and restore all file indexes plus the task's original cleanup option, without newly enabling cleanup, then honor the original Download Now/Download Later state.
+- Pending jobs are isolated by a stable RPC endpoint identity and resume only in the same browser against the same endpoint. Identity is intentionally `protocol|host|port|interface`; it excludes secret and custom request headers because those are credentials/routing configuration rather than endpoint identity.
+- Poll one queued job at a time every 250ms. Do not issue coordinator RPC calls while no current-endpoint jobs exist. Three successful missing-child scans retain their count semantics and can finish in about 750ms when that job is alone; file-list refresh keeps its separate five-second cadence.
 - Use four-space indentation, single-quoted JavaScript strings, semicolons, and Node 14-compatible syntax.
 - Do not modify generated `dist/` files.
 
@@ -247,7 +248,7 @@ git commit -m "feat: add BT filter RPC primitives"
 **Interfaces:**
 - Consumes: `ariaNgConstants.btFileFilterQueueStorageKey`, `ariaNgStorageService`, and `ariaNgSettingService.getCurrentRpcIdentity()`.
 - Produces: `isBtMetadataUrl(url): boolean` for magnet and HTTP(S) `.torrent` URLs.
-- Produces: `planFiles(files, thresholdBytes): {mode, selectedIndexes, allIndexes}` where mode is `filter` or `full`.
+- Produces: `planFiles(files, thresholdBytes): {mode, selectedIndexes, allIndexes}` where mode is `filter`, `all-small`, or `all-large`.
 - Produces: `enqueue(rootGid, intent): void`; intent is `{thresholdBytes, startAfterFilter, sourceType}`.
 - Produces: `getJobs(): Array`, `getStatus(): object`, and `start(): void` for later lifecycle work.
 
@@ -276,8 +277,8 @@ test('filters only mixed-size file lists with strict threshold semantics', funct
     ], 100 * mb))), {
         mode: 'filter', selectedIndexes: [2, 3], allIndexes: [1, 2, 3]
     });
-    assert.strictEqual(service.planFiles([{index: '1', length: '1'}], 100 * mb).mode, 'full');
-    assert.strictEqual(service.planFiles([{index: '1', length: String(101 * mb)}], 100 * mb).mode, 'full');
+    assert.strictEqual(service.planFiles([{index: '1', length: '1'}], 100 * mb).mode, 'all-small');
+    assert.strictEqual(service.planFiles([{index: '1', length: String(101 * mb)}], 100 * mb).mode, 'all-large');
 });
 
 test('persists immutable jobs under the current RPC identity', function () {
@@ -321,8 +322,11 @@ var planFiles = function (files, thresholdBytes) {
         }
     }
 
+    var mode = selectedIndexes.length < 1 ? 'all-small' :
+        (selectedIndexes.length === allIndexes.length ? 'all-large' : 'filter');
+
     return {
-        mode: selectedIndexes.length > 0 && selectedIndexes.length < allIndexes.length ? 'filter' : 'full',
+        mode: mode,
         selectedIndexes: selectedIndexes,
         allIndexes: allIndexes
     };
@@ -420,7 +424,7 @@ test('follows metadata child, filters mixed files, enables cleanup, and starts D
 
 Add separate tests asserting:
 
-- all-small and all-large plans do not call `changeTaskOptions` and Download Now unpauses;
+- all-small with an existing partial selection restores every index; all-large never calls `changeTaskOptions` and preserves existing selection/cleanup; Download Now unpauses both outcomes;
 - Download Later never calls `startTasks` after successful filtering;
 - three failed filter calls enter fallback, restore `'select-file': '1,2'` and the captured original cleanup value, then unpause only Download Now;
 - a network/tellStatus failure retains the queue without consuming filter retries;
