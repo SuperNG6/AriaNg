@@ -340,6 +340,12 @@
     color: #dd4b39;
 }
 
+.skin-aria-ng .bt-filter-badge {
+    color: #208fe5;
+    background-color: rgba(32, 143, 229, 0.12);
+    border: 1px solid rgba(32, 143, 229, 0.35);
+}
+
 .skin-aria-ng .icon-expand {
     color: #5399e8;
 }

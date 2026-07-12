@@ -29,6 +29,10 @@
             return aria2SettingService.getGlobalStat(function (response) {
                 if (!response.success && response.data.message === aria2RpcErrors.Unauthorized.message) {
                     $interval.cancel(globalStatRefreshPromise);
+                    if (btFileFilterStarted) {
+                        btFileFilterStarted = false;
+                        ariaNgBtFileFilterService.stop();
+                    }
                     return;
                 }
 
@@ -510,6 +514,11 @@
 
             if (globalStatRefreshPromise) {
                 $interval.cancel(globalStatRefreshPromise);
+            }
+
+            if (btFileFilterStarted) {
+                btFileFilterStarted = false;
+                ariaNgBtFileFilterService.stop();
             }
         });
 

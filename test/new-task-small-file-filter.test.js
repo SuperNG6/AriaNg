@@ -339,8 +339,12 @@ const loadFilterService = function (options) {
                     silent: silent,
                     requestParams: requestParams
                 });
+                let sourceTasks = options.waitingTasks || [];
+                if (type === 'downloading') {
+                    sourceTasks = options.activeTasks || [];
+                }
                 const response = waitingListResponses.length > 0 ? waitingListResponses.shift() :
-                    {success: true, data: options.waitingTasks || []};
+                    {success: true, data: sourceTasks};
                 if (options.deferWaitingList) {
                     pendingWaitingListCallbacks.push({callback: callback, response: response});
                 } else {
@@ -1069,6 +1073,35 @@ test('does not mistake an active magnet metadata file for the final BT task', fu
     assert.deepStrictEqual(context.changedOptions, []);
     assert.deepStrictEqual(context.startedGids, []);
     assert.strictEqual(context.service.getStatus().filtered, 0);
+    assert.strictEqual(context.service.getStatus().full, 0);
+});
+
+test('recovers a magnet child that has already moved to the active queue without staying stuck', function () {
+    const context = loadFilterService({
+        tasks: {
+            root: {gid: 'root', status: 'complete', followedBy: ['child'], bittorrent: {}, files: [
+                {index: '1', path: '[METADATA]hash', length: '232531', selected: 'true'}
+            ]},
+            child: {gid: 'child', status: 'active', following: 'root', bittorrent: {mode: 'multi'}, files: [
+                {index: '1', length: '1048576', selected: 'true'},
+                {index: '2', length: '209715200', selected: 'true'}
+            ]}
+        },
+        taskOptions: {'bt-remove-unselected-file': 'false'},
+        waitingTasks: [],
+        activeTasks: [{gid: 'child', following: 'root'}]
+    });
+
+    context.service.enqueue('root', {thresholdBytes: 104857600, startAfterFilter: false, sourceType: 'magnet'});
+    context.service.start();
+    context.tickUntilIdle();
+
+    assert.deepStrictEqual(context.changedOptions, [{
+        gid: 'child',
+        options: {'select-file': '2', 'bt-remove-unselected-file': 'true'}
+    }]);
+    assert.strictEqual(context.getSavedQueue().length, 0);
+    assert.strictEqual(context.service.getStatus().filtered, 1);
     assert.strictEqual(context.service.getStatus().full, 0);
 });
 

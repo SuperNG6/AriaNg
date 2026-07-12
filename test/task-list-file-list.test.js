@@ -225,6 +225,9 @@ const loadListController = function (route) {
         'aria2RpcErrors': {Unauthorized: {message: 'Unauthorized'}},
         'ariaNgCommonService': commonService,
         'ariaNgSettingService': settingService,
+        'ariaNgBtFileFilterService': {
+            getPendingGidStageMap: function () { return {}; }
+        },
         'aria2TaskService': taskService
     };
     const names = controllerDefinition.slice(0, -1);

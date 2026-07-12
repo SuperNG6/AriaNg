@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    angular.module('ariaNg').controller('DownloadListController', ['$rootScope', '$scope', '$window', '$location', '$route', '$interval', 'dragulaService', 'aria2RpcErrors', 'ariaNgCommonService', 'ariaNgSettingService', 'aria2TaskService', function ($rootScope, $scope, $window, $location, $route, $interval, dragulaService, aria2RpcErrors, ariaNgCommonService, ariaNgSettingService, aria2TaskService) {
+    angular.module('ariaNg').controller('DownloadListController', ['$rootScope', '$scope', '$window', '$location', '$route', '$interval', 'dragulaService', 'aria2RpcErrors', 'ariaNgCommonService', 'ariaNgSettingService', 'ariaNgBtFileFilterService', 'aria2TaskService', function ($rootScope, $scope, $window, $location, $route, $interval, dragulaService, aria2RpcErrors, ariaNgCommonService, ariaNgSettingService, ariaNgBtFileFilterService, aria2TaskService) {
         var location = $location.path().substring(1);
         var downloadTaskRefreshPromise = null;
         var pauseDownloadTaskRefresh = false;
@@ -37,6 +37,28 @@
             for (var gid in collapsedFileDirs) {
                 if (collapsedFileDirs.hasOwnProperty(gid) && !activeTaskIds[gid]) {
                     delete collapsedFileDirs[gid];
+                }
+            }
+        };
+
+        var decorateBtFilterStage = function (tasks) {
+            var stageMap = ariaNgBtFileFilterService.getPendingGidStageMap();
+            var hasAny = false;
+
+            for (var key in stageMap) {
+                if (stageMap.hasOwnProperty(key)) {
+                    hasAny = true;
+                    break;
+                }
+            }
+
+            for (var i = 0; tasks && i < tasks.length; i++) {
+                var task = tasks[i];
+
+                if (hasAny && stageMap.hasOwnProperty(task.gid)) {
+                    task.btFilterStage = stageMap[task.gid];
+                } else if (task.btFilterStage) {
+                    delete task.btFilterStage;
                 }
             }
         };
@@ -171,6 +193,7 @@
                     }
                 }
 
+                decorateBtFilterStage($rootScope.taskContext.list);
                 cleanupCollapsedFileDirs($rootScope.taskContext.list);
                 $rootScope.taskContext.enableSelectAll = $rootScope.taskContext.list && $rootScope.taskContext.list.length > 0;
             }, silent);

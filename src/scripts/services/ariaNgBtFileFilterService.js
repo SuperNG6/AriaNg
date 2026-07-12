@@ -743,6 +743,59 @@
                     return;
                 }
 
+                finishTickAndRecoverActiveChild(job, rpcIdentity, terminalStatus);
+            }, true, ['gid', 'following']);
+        };
+
+        var recoverActiveChild = function (job, rpcIdentity, terminalStatus) {
+            aria2TaskService.getTaskList('downloading', true, function (response) {
+                if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                    finishTick();
+                    return;
+                }
+
+                if (!response || !response.success) {
+                    finishTick();
+                    return;
+                }
+
+                var activeTasks = response.data || [];
+                var childGidsByRoot = {};
+                for (var i = 0; i < activeTasks.length; i++) {
+                    if (activeTasks[i].following) {
+                        if (!childGidsByRoot[activeTasks[i].following]) {
+                            childGidsByRoot[activeTasks[i].following] = [];
+                        }
+                        childGidsByRoot[activeTasks[i].following].push(activeTasks[i].gid);
+                    }
+                }
+
+                var currentJobs = getCurrentJobs();
+                var recoveredAnyJob = false;
+                var recoveredCurrentJob = false;
+                for (var j = 0; j < currentJobs.length; j++) {
+                    var currentJob = currentJobs[j];
+                    var childGids = childGidsByRoot[currentJob.rootGid] || [];
+                    if (!currentJob.childGid && childGids.length === 1) {
+                        currentJob.childGid = childGids[0];
+                        currentJob.stage = 'waiting-files';
+                        currentJob.missingRootScanCount = 0;
+                        currentJob.terminalChildScanCount = 0;
+                        currentJob.updatedAt = Date.now();
+                        recoveredAnyJob = true;
+                        recoveredCurrentJob = recoveredCurrentJob || currentJob === job;
+                    }
+                }
+
+                if (recoveredAnyJob) {
+                    saveJobs();
+                }
+
+                if (recoveredCurrentJob) {
+                    finishTick();
+                    return;
+                }
+
                 var counter = terminalStatus ? 'terminalChildScanCount' : 'missingRootScanCount';
                 job[counter] = normalizeInteger(job[counter], 0) + 1;
                 if (job[counter] >= missingRootScanLimit) {
@@ -753,6 +806,10 @@
 
                 finishTick();
             }, true, ['gid', 'following']);
+        };
+
+        var finishTickAndRecoverActiveChild = function (job, rpcIdentity, terminalStatus) {
+            recoverActiveChild(job, rpcIdentity, terminalStatus);
         };
 
         var processTaskResponse = function (job, response, rpcIdentity) {
@@ -902,6 +959,34 @@
             return pollingPromise;
         };
 
+        var stop = function () {
+            if (pollingPromise) {
+                $interval.cancel(pollingPromise);
+                pollingPromise = null;
+            }
+
+            tickInProgress = false;
+            pollCursor = 0;
+            setIdleStatus();
+        };
+
+        var buildPendingGidStageMap = function () {
+            var currentJobs = getCurrentJobs();
+            var map = {};
+
+            for (var i = 0; i < currentJobs.length; i++) {
+                var job = currentJobs[i];
+                if (job.rootGid) {
+                    map[job.rootGid] = job.stage;
+                }
+                if (job.childGid) {
+                    map[job.childGid] = job.stage;
+                }
+            }
+
+            return map;
+        };
+
         return {
             isBtMetadataUrl: isBtMetadataUrl,
             planFiles: planFiles,
@@ -909,10 +994,14 @@
             getJobs: function () {
                 return sanitizeQueue(jobs);
             },
+            getPendingGidStageMap: function () {
+                return buildPendingGidStageMap();
+            },
             getStatus: function () {
                 return status;
             },
-            start: start
+            start: start,
+            stop: stop
         };
     }]);
 }());

@@ -46,7 +46,7 @@
                     <div class="checkbox checkbox-primary" ng-class="{'checkbox-hide': !taskContext.selected[task.gid]}">
                         <input id="{{'task_' + task.gid}}" type="checkbox" class="disable-clickable" ng-model="taskContext.selected[task.gid]"/>
                         <label for="{{'task_' + task.gid}}">
-                            <span class="task-name auto-ellipsis" ng-bind="task.taskName" title="{{task.taskName}}"></span>
+                            <span class="task-name auto-ellipsis" ng-bind="task.taskName" title="{{task.taskName}}"></span><span class="bt-filter-badge" ng-if="task.btFilterStage" title="{{('BT task pending file filter' | translate) + ': ' + ('format.bt-file-filter.stage.' + task.btFilterStage | translate)}}"><i class="fa fa-filter"></i> <span translate>format.bt-file-filter.badge</span></span>
                         </label>
                     </div>
                     <div class="task-files">

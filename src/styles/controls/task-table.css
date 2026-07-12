@@ -62,6 +62,32 @@
     display: block;
 }
 
+.task-table .checkbox-primary label {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+}
+
+.task-table .checkbox-primary label .task-name {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+.task-table .bt-filter-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 6px;
+    font-size: 11px;
+    line-height: 16px;
+    border-radius: 8px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+}
+
+.task-table .bt-filter-badge > i {
+    margin-right: 3px;
+}
+
 .task-table .peer-name-wrapper {
     display: inline-block;
     width: 100%;

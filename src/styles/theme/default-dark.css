@@ -259,6 +259,12 @@
     color: #54a9f5;
 }
 
+.theme-dark.skin-aria-ng .bt-filter-badge {
+    color: #54a9f5;
+    background-color: rgba(84, 169, 245, 0.16);
+    border: 1px solid rgba(84, 169, 245, 0.4);
+}
+
 .theme-dark.skin-aria-ng .main-header .bt-file-filter-status.status-complete {
     color: #63c986;
 }
