@@ -92,8 +92,10 @@ Use a compact key determined by the status type:
 
 ```html
 <span class="bt-file-filter-status-compact"
-      ng-bind="('format.bt-file-filter.compact.' + btFileFilterStatus.type) | translate: {count: btFileFilterStatus.type === 'warning' ? btFileFilterStatus.fallback : (btFileFilterStatus.type === 'complete' ? (btFileFilterStatus.filtered + btFileFilterStatus.full) : btFileFilterStatus.total)}"></span>
+      ng-bind="('format.bt-file-filter.compact.' + btFileFilterStatus.type) | translate: {count: btFileFilterStatus.type === 'warning' ? btFileFilterStatus.fallback : (btFileFilterStatus.type === 'complete' ? (btFileFilterStatus.filtered + btFileFilterStatus.full) : ({processing: btFileFilterStatus.total, waiting: btFileFilterStatus.textParams.count, resuming: btFileFilterStatus.textParams.count})[btFileFilterStatus.type])}"></span>
 ```
+
+`processing` 显示整批任务数；`waiting` 和 `resuming` 必须使用协调器提供的当前待处理数量，不能回退到整批 `total`。
 
 - [ ] **Step 4: Replace English, Simplified Chinese, and Traditional Chinese copy**
 
