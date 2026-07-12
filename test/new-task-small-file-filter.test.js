@@ -2224,11 +2224,16 @@ test('renders the remembered filter and global toolbar status', function () {
     const styles = read('src/styles/core/core.css') +
         read('src/styles/theme/default.css') + read('src/styles/theme/default-dark.css');
     const language = read('src/scripts/config/defaultLanguage.js');
+    const simplifiedChinese = read('src/langs/zh_Hans.txt');
+    const traditionalChinese = read('src/langs/zh_Hant.txt');
 
     assert(index.includes('class="bt-file-filter-toolbar" ng-if="isNewTaskPage()"'));
     assert(index.includes('ng-model="btFileFilterContext.enabled"'));
     assert(index.includes('ng-model="btFileFilterContext.minSizeMb"'));
     assert(index.includes('ng-change="saveBtFileFilterSetting()"'));
+    assert(index.includes('<span class="bt-file-filter-label" translate>Exclude BT task files smaller than</span>'));
+    assert(index.includes('<span class="bt-file-filter-suffix" translate>BT file filter suffix</span>'));
+    assert(index.includes("aria-label=\"{{'BT file filter threshold' | translate}}\""));
     assert(index.includes('bt-file-filter-status'));
     assert(index.includes('btFileFilterStatus.textKey | translate: btFileFilterStatus.textParams'));
     assert(index.includes('aria-invalid="{{btFileFilterContext.enabled && !isBtFileFilterValid()}}"'));
@@ -2236,19 +2241,28 @@ test('renders the remembered filter and global toolbar status', function () {
     assert(styles.includes('.bt-file-filter-status'));
     assert(styles.includes('.bt-file-filter-status-compact'));
     assert(styles.includes('@media (max-width: 767px)'));
-    assert(language.includes("'Filter files smaller than'"));
     assert(language.includes("'format.bt-file-filter.resuming'"));
-    assert(read('src/langs/zh_Hans.txt').includes('format.bt-file-filter.compact=过滤 {{count}}'));
-    assert(read('src/langs/zh_Hant.txt').includes('format.bt-file-filter.compact=篩選 {{count}}'));
+    assert(simplifiedChinese.includes('Exclude BT task files smaller than=排除 BT 任务中小于'));
+    assert(simplifiedChinese.includes('BT file filter suffix=的文件'));
+    assert(simplifiedChinese.includes('format.bt-file-filter.complete=BT 小文件处理完成：{{filtered}} 个任务已排除小文件，{{full}} 个任务保留全部文件'));
+    assert(simplifiedChinese.includes('format.bt-file-filter.fallback={{count}} 个 BT 任务无法排除小文件，已回退为保留全部文件'));
+    assert(traditionalChinese.includes('Exclude BT task files smaller than=排除 BT 工作中小於'));
 });
 
 test('compact filter status reports an outcome appropriate to each terminal state', function () {
     const index = read('src/index.html');
+    const simplifiedChinese = read('src/langs/zh_Hans.txt');
 
+    assert(index.includes("'format.bt-file-filter.compact.' + btFileFilterStatus.type"));
     assert(index.includes("btFileFilterStatus.type === 'warning' ? btFileFilterStatus.fallback"));
     assert(index.includes("btFileFilterStatus.type === 'complete' ? (btFileFilterStatus.filtered + btFileFilterStatus.full)"));
     assert(index.includes(': btFileFilterStatus.total') || index.includes(': (btFileFilterStatus.total)'));
     assert(!index.includes('btFileFilterStatus.total - btFileFilterStatus.processed'));
+    assert(simplifiedChinese.includes('format.bt-file-filter.compact.resuming=恢复 {{count}}'));
+    assert(simplifiedChinese.includes('format.bt-file-filter.compact.waiting=等待 {{count}}'));
+    assert(simplifiedChinese.includes('format.bt-file-filter.compact.processing=处理中 {{count}}'));
+    assert(simplifiedChinese.includes('format.bt-file-filter.compact.complete=已处理 {{count}}'));
+    assert(simplifiedChinese.includes('format.bt-file-filter.compact.warning=已回退 {{count}}'));
 });
 
 test('scopes tablet search hiding to active filter controls or status', function () {
