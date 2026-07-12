@@ -64,10 +64,10 @@
   },
   "name": "ariang",
   "description": "AriaNg, a modern web frontend making aria2 easier to use.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "main": "index.html",
   "scripts": {
-    "test": "node test/task-list-file-list.test.js && node test/release-workflow.test.js && node test/new-task-small-file-filter.test.js",
+    "test": "node test/task-list-file-list.test.js && node test/release-workflow.test.js && node test/new-task-small-file-filter.test.js && node test/bt-filter-pending-badge.test.js",
     "build": "gulp clean build"
   },
   "browsers": [

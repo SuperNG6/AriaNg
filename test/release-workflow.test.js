@@ -11,8 +11,8 @@ const workflow = fs.readFileSync(workflowPath, 'utf8');
 const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const packageLock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
 
-assert.strictEqual(packageJson.version, '2.0.0');
-assert.strictEqual(packageLock.version, '2.0.0');
+assert.strictEqual(packageJson.version, '2.1.0');
+assert.strictEqual(packageLock.version, '2.1.0');
 
 [
     'workflow_dispatch:',
@@ -31,7 +31,8 @@ assert.strictEqual(packageLock.version, '2.0.0');
     'AriaNg-${VERSION}-AllInOne.zip',
     '--verify-tag',
     '--target "$GITHUB_SHA"',
-    '--generate-notes',
+    '--notes-file "$RELEASE_NOTES_FILE"',
+    'docs/releases/${VERSION}.md',
     'GH_TOKEN: ${{ github.token }}',
     'persist-credentials: false',
     'fetch-depth: 0',
