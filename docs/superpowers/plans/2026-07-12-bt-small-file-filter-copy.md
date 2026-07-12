@@ -162,11 +162,220 @@ Run: `node test/new-task-small-file-filter.test.js`
 
 Expected: all BT small-file filter checks pass.
 
-- [ ] **Step 6: Verify layout-sensitive source contracts and the full regression suite**
+- [ ] **Step 6: Run the complete regression suite**
 
 Run:
 
 ```bash
+npm test
+git diff --check
+```
+
+Expected: all tests pass and `git diff --check` prints nothing.
+
+- [ ] **Step 7: Commit the copy implementation**
+
+```bash
+git add test/new-task-small-file-filter.test.js src/index.html src/scripts/config/defaultLanguage.js src/langs/zh_Hans.txt src/langs/zh_Hant.txt
+git commit -m "fix: clarify BT small file filter copy"
+```
+
+### Task 2: Apply the approved lightweight grouped styling
+
+**Files:**
+- Modify: `test/new-task-small-file-filter.test.js:2287-2311`
+- Modify: `src/index.html:172-186`
+- Modify: `src/styles/core/core.css:95-131,192-234`
+- Modify: `src/styles/theme/default.css:50-74`
+- Modify: `src/styles/theme/default-dark.css:207-232`
+- Modify: `src/scripts/config/defaultLanguage.js:43-56`
+- Modify: `src/langs/zh_Hans.txt:39-54`
+- Modify: `src/langs/zh_Hant.txt:39-54`
+
+**Interfaces:**
+- Consumes: `btFileFilterContext.enabled`, `isBtFileFilterValid()`, and the toolbar controls completed in Task 1.
+- Produces: `.bt-file-filter-rule.is-enabled`, `.bt-file-filter-rule.has-error`, `.bt-file-filter-error`, and the `BT file filter size error` translation key.
+
+- [ ] **Step 1: Write failing source-contract tests for visual and accessible states**
+
+Replace `keeps the filter label compact and invalid borders themed` with assertions for the approved grouped component:
+
+```js
+test('styles the BT filter as an accessible grouped rule in every state', function () {
+    const index = read('src/index.html');
+    const core = read('src/styles/core/core.css');
+    const light = read('src/styles/theme/default.css');
+    const dark = read('src/styles/theme/default-dark.css');
+
+    assert(index.includes('class="bt-file-filter-rule"'));
+    assert(index.includes("'is-enabled': btFileFilterContext.enabled"));
+    assert(index.includes("'has-error': btFileFilterContext.enabled && !isBtFileFilterValid()"));
+    assert(index.includes('class="bt-file-filter-error"'));
+    assert(index.includes('ng-if="btFileFilterContext.enabled && !isBtFileFilterValid()"'));
+    assert(index.includes('role="alert"'));
+    assert(core.includes('.main-header .bt-file-filter-rule'));
+    assert(core.includes('.main-header .bt-file-filter-error'));
+    assert(core.includes('@media (max-width: 767px)'));
+    assert(core.includes('flex-basis: 100%'));
+    assert(light.includes('.skin-aria-ng .main-header .bt-file-filter-rule.is-enabled'));
+    assert(light.includes('.skin-aria-ng .main-header .bt-file-filter-rule.has-error'));
+    assert(dark.includes('.theme-dark.skin-aria-ng .main-header .bt-file-filter-rule.is-enabled'));
+    assert(dark.includes('.theme-dark.skin-aria-ng .main-header .bt-file-filter-rule.has-error'));
+});
+```
+
+- [ ] **Step 2: Run the focused test and confirm the grouped component is missing**
+
+Run: `node test/new-task-small-file-filter.test.js`
+
+Expected: FAIL because `.bt-file-filter-rule` and its state classes do not exist.
+
+- [ ] **Step 3: Wrap the existing controls in one stateful rule surface**
+
+Keep the outer list item and wrap the Task 1 controls as follows:
+
+```html
+<li class="bt-file-filter-toolbar" ng-if="isNewTaskPage()">
+    <div class="bt-file-filter-rule"
+         ng-class="{'is-enabled': btFileFilterContext.enabled, 'has-error': btFileFilterContext.enabled && !isBtFileFilterValid()}">
+        <label class="bt-file-filter-toggle" title="{{'BT file filter cleanup warning' | translate}}">
+            <input type="checkbox" ng-model="btFileFilterContext.enabled"
+                   ng-change="saveBtFileFilterSetting()"/>
+            <span class="bt-file-filter-label" translate>Exclude BT task files smaller than</span>
+        </label>
+        <input class="form-control bt-file-filter-size" type="number" min="1" max="102400" step="1"
+               ng-model="btFileFilterContext.minSizeMb" ng-disabled="!btFileFilterContext.enabled"
+               ng-change="saveBtFileFilterSetting()"
+               ng-class="{'has-error': btFileFilterContext.enabled && !isBtFileFilterValid()}"
+               aria-label="{{'BT file filter threshold' | translate}}"
+               aria-invalid="{{btFileFilterContext.enabled && !isBtFileFilterValid()}}"/>
+        <span class="bt-file-filter-unit">MB</span>
+        <span class="bt-file-filter-suffix" translate>BT file filter suffix</span>
+        <span class="bt-file-filter-error" role="alert"
+              ng-if="btFileFilterContext.enabled && !isBtFileFilterValid()"
+              translate>BT file filter size error</span>
+    </div>
+</li>
+```
+
+Add translations:
+
+```text
+English: BT file filter size error=Enter 1–102400
+Simplified Chinese: BT file filter size error=请输入 1–102400
+Traditional Chinese: BT file filter size error=請輸入 1–102400
+```
+
+- [ ] **Step 4: Implement layout, spacing, focus, and narrow-screen behavior**
+
+In `src/styles/core/core.css`, keep structural rules theme-neutral:
+
+```css
+.main-header .navbar .nav > li.bt-file-filter-toolbar {
+    display: inline-flex;
+    align-items: center;
+    height: 50px;
+    padding: 0 8px;
+    white-space: nowrap;
+}
+
+.main-header .bt-file-filter-rule {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+    padding: 4px 10px;
+    border-left: 3px solid transparent;
+    border-radius: 4px;
+    transition: color .15s ease, background-color .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+
+.main-header .bt-file-filter-suffix {
+    margin-left: 5px;
+}
+
+.main-header .bt-file-filter-error {
+    margin-left: 8px;
+    font-size: 11px;
+}
+
+@media (max-width: 767px) {
+    .main-header .navbar .navbar-toolbar > .navbar-nav {
+        display: flex;
+        flex-wrap: wrap;
+    }
+
+    .main-header .navbar .nav > li.bt-file-filter-toolbar {
+        flex-basis: 100%;
+        height: auto;
+        padding: 4px 6px 7px 37px;
+    }
+
+    .main-header .bt-file-filter-rule {
+        min-height: 38px;
+    }
+}
+```
+
+Remove the `@media (max-width: 1199px)` rule that visually hides `.bt-file-filter-label`; the approved design keeps the complete sentence visible. Preserve scoped search hiding and all status compaction rules.
+
+- [ ] **Step 5: Implement light, disabled, error, and dark surfaces**
+
+In `src/styles/theme/default.css`, style the disabled state as the base and enabled/error states as modifiers:
+
+```css
+.skin-aria-ng .main-header .bt-file-filter-rule {
+    color: #9aa1a7;
+    background-color: #f3f4f5;
+    box-shadow: none;
+}
+
+.skin-aria-ng .main-header .bt-file-filter-rule.is-enabled {
+    color: #606060;
+    background-color: #fff;
+    border-left-color: #2196f3;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .1);
+}
+
+.skin-aria-ng .main-header .bt-file-filter-rule.has-error {
+    border-left-color: #dd4b39;
+}
+
+.skin-aria-ng .main-header .bt-file-filter-error {
+    color: #c34737;
+}
+```
+
+In `src/styles/theme/default-dark.css`, use a raised dark surface and equivalent error contrast:
+
+```css
+.theme-dark.skin-aria-ng .main-header .bt-file-filter-rule {
+    color: #929292;
+    background-color: #252a2e;
+    box-shadow: none;
+}
+
+.theme-dark.skin-aria-ng .main-header .bt-file-filter-rule.is-enabled {
+    color: #ddd;
+    background-color: #30383e;
+    border-left-color: #42a5f5;
+    box-shadow: 0 2px 7px rgba(0, 0, 0, .28);
+}
+
+.theme-dark.skin-aria-ng .main-header .bt-file-filter-rule.has-error {
+    border-left-color: #dd4b39;
+}
+
+.theme-dark.skin-aria-ng .main-header .bt-file-filter-error {
+    color: #ef8a7d;
+}
+```
+
+- [ ] **Step 6: Run focused and complete automated verification**
+
+Run:
+
+```bash
+node test/new-task-small-file-filter.test.js
 npm test
 npx gulp lint
 npm run build
@@ -176,13 +385,13 @@ git diff --check
 
 Expected: all tests pass, lint reports no errors, both builds finish successfully, and `git diff --check` prints nothing.
 
-- [ ] **Step 7: Visually verify the completed sentence and compact states**
+- [ ] **Step 7: Perform real-browser visual and interaction verification**
 
-Run `npx gulp serve`, then inspect `/#!/new` at desktop width and 375px in both light and dark themes. Confirm the sentence reads naturally, the suffix remains attached to `MB`, the toolbar does not overflow horizontally, the disabled and invalid threshold states remain legible, and compact status text uses the correct state verb.
+Run `npx gulp serve` and inspect `/#!/new` in a real Chromium browser at desktop width and 375×812. Verify light and dark themes, enabled and disabled states, values `100`, `1`, `102400`, invalid values `0` and `102401`, keyboard focus, no horizontal scrolling, natural second-row wrapping, and unchanged task submission behavior. Also inspect a task-list route to confirm the filter container is absent there and the Files button/status layout remains intact.
 
-- [ ] **Step 8: Commit the implementation**
+- [ ] **Step 8: Commit the visual implementation**
 
 ```bash
-git add test/new-task-small-file-filter.test.js src/index.html src/scripts/config/defaultLanguage.js src/langs/zh_Hans.txt src/langs/zh_Hant.txt
-git commit -m "fix: clarify BT small file filter copy"
+git add test/new-task-small-file-filter.test.js src/index.html src/styles/core/core.css src/styles/theme/default.css src/styles/theme/default-dark.css src/scripts/config/defaultLanguage.js src/langs/zh_Hans.txt src/langs/zh_Hant.txt
+git commit -m "style: polish BT small file filter toolbar"
 ```
