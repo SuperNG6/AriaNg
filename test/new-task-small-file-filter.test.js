@@ -1153,7 +1153,7 @@ test('does not choose an arbitrary child when multiple paused tasks follow the s
     assert.deepStrictEqual(context.startedGids, []);
 });
 
-test('all-small and all-large plans skip option changes and start Download Now', function () {
+test('fully selected all-small and all-large tasks start without option changes', function () {
     const cases = [
         [{index: '1', length: '1', selected: 'true'}, {index: '2', length: '2', selected: 'true'}],
         [{index: '1', length: '209715200', selected: 'true'}, {index: '2', length: '314572800', selected: 'true'}]
@@ -1361,8 +1361,8 @@ test('missing-root reconciliation ignores transient list failures and ambiguous 
     assert.strictEqual(ambiguous.getSavedQueue().length, 1);
 });
 
-test('terminal remote torrent roots settle after a bounded child creation race', function () {
-    ['complete', 'error', 'removed'].forEach(function (terminalStatus) {
+test('completed and errored remote torrent roots settle after a bounded child creation race', function () {
+    ['complete', 'error'].forEach(function (terminalStatus) {
         const context = loadFilterService({tasks: {
             root: {gid: 'root', status: terminalStatus, files: []}
         }});
@@ -2051,6 +2051,88 @@ test('removed task in a starting stage is silently discarded', function () {
     assert.strictEqual(context.service.getStatus().full, 0);
     assert.strictEqual(context.service.getStatus().fallback, 0);
     assert.strictEqual(context.notifications.length, 0);
+});
+
+test('removed BT task waiting for metadata is silently discarded before filtering', function () {
+    const context = loadFilterService({tasks: {
+        task: {gid: 'task', status: 'removed', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]}
+    }, taskOptions: {'bt-remove-unselected-file': 'false'}});
+    context.service.enqueue('task', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'
+    });
+    context.service.start();
+    context.tick();
+
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.getSavedQueue())), []);
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(context.service.getStatus().filtered, 0);
+    assert.strictEqual(context.service.getStatus().full, 0);
+    assert.strictEqual(context.service.getStatus().fallback, 0);
+    assert.strictEqual(context.notifications.length, 0);
+});
+
+test('removed BT task in an option-mutation stage is silently discarded', function () {
+    ['applying-filter', 'restoring-full'].forEach(function (stage) {
+        const job = {
+            rpcIdentity: 'http|localhost|6800|jsonrpc', rootGid: 'task', childGid: '', thresholdBytes: 100,
+            startAfterFilter: true, sourceType: 'torrent', stage: stage,
+            retryCount: stage === 'restoring-full' ? 3 : 0, originalRemoveUnselectedFile: 'false',
+            allIndexes: [1, 2], selectedIndexes: [2], restorationOutcome: 'fallback'
+        };
+        const context = loadFilterService({savedQueue: [job], tasks: {
+            task: {gid: 'task', status: 'removed', bittorrent: {}, files: [
+                {index: '1', length: '1', selected: 'true'},
+                {index: '2', length: '200', selected: 'true'}
+            ]}
+        }, taskOptions: {'bt-remove-unselected-file': 'false'}});
+        context.service.start();
+        context.tick();
+
+        assert.deepStrictEqual(JSON.parse(JSON.stringify(context.getSavedQueue())), [], stage);
+        assert.deepStrictEqual(context.changedOptions, [], stage);
+        assert.deepStrictEqual(context.startedGids, [], stage);
+        assert.strictEqual(context.service.getStatus().filtered, 0, stage);
+        assert.strictEqual(context.service.getStatus().full, 0, stage);
+        assert.strictEqual(context.service.getStatus().fallback, 0, stage);
+        assert.strictEqual(context.notifications.length, 0, stage);
+    });
+});
+
+test('direct metadata child discovery waits for exactly one child before mutating', function () {
+    const tasks = {
+        root: {gid: 'root', status: 'complete', followedBy: ['child-a', 'child-b'], files: []},
+        child: {gid: 'child', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]}
+    };
+    const context = loadFilterService({tasks: tasks, taskOptions: {'bt-remove-unselected-file': 'false'}});
+    context.service.enqueue('root', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+    context.service.start();
+    context.tick();
+
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    assert.strictEqual(context.getSavedQueue()[0].childGid, '');
+    assert.strictEqual(context.getSavedQueue()[0].stage, 'waiting-metadata');
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.deepStrictEqual(context.startedGids, []);
+
+    tasks.root.followedBy = ['child'];
+    context.tick();
+    assert.strictEqual(context.getSavedQueue()[0].childGid, 'child');
+    context.tick();
+
+    assert.deepStrictEqual(context.changedOptions, [{gid: 'child', options: {
+        'select-file': '2', 'bt-remove-unselected-file': 'true'
+    }}]);
+    assert.deepStrictEqual(context.startedGids, ['child']);
+    assert.strictEqual(context.service.getStatus().filtered, 1);
 });
 
 test('terminal non-BT remote torrent root settles as non-applicable', function () {

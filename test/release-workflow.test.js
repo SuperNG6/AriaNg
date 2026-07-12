@@ -23,6 +23,8 @@ assert.strictEqual(packageLock.version, '1.3.15');
     "node-version: '20'",
     'actions/upload-artifact@v6',
     'npm ci',
+    '- name: Run tests',
+    'run: npm test',
     'npx gulp clean build',
     'npx gulp clean build-bundle',
     'AriaNg-${VERSION}.zip',
@@ -37,6 +39,17 @@ assert.strictEqual(packageLock.version, '1.3.15');
 ].forEach(function (contract) {
     assert(workflow.includes(contract), 'workflow is missing: ' + contract);
 });
+
+const installIndex = workflow.indexOf('- name: Install dependencies');
+const testIndex = workflow.indexOf('- name: Run tests');
+const validateIndex = workflow.indexOf('- name: Validate version and release state');
+const buildIndex = workflow.indexOf('- name: Build standard archive');
+const publishIndex = workflow.indexOf('- name: Publish existing tag');
+
+assert(installIndex >= 0 && testIndex > installIndex, 'tests must run after npm ci');
+assert(testIndex < validateIndex, 'tests must run before version and release validation');
+assert(testIndex < buildIndex, 'tests must run before builds');
+assert(testIndex < publishIndex, 'tests must run before publish');
 
 assert(/\^\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/.test(workflow), 'workflow must strictly validate unprefixed versions');
 assert(workflow.includes('github.event_name == \'workflow_dispatch\''), 'manual and tag release paths must be distinct');

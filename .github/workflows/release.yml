@@ -39,6 +39,12 @@ jobs:
           node-version: '20'
           cache: npm
 
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
       - name: Validate version and release state
         shell: bash
         run: |
@@ -85,9 +91,6 @@ jobs:
           fi
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Install dependencies
-        run: npm ci
 
       - name: Build standard archive
         shell: bash

@@ -775,6 +775,10 @@
             }
 
             var task = response.data;
+            if (task.status === 'removed') {
+                removeDeletedJob(job, rpcIdentity);
+                return;
+            }
             if (job.missingRootScanCount) {
                 job.missingRootScanCount = 0;
                 touchAndSave(job);
@@ -783,14 +787,18 @@
                 processStartingJob(job, task, rpcIdentity);
             } else if (task.bittorrent && task.files && task.files.length > 0) {
                 processBtTask(job, task, rpcIdentity);
-            } else if (task.followedBy && task.followedBy.length > 0) {
+            } else if (task.followedBy && task.followedBy.length === 1) {
                 job.childGid = task.followedBy[0];
                 job.stage = 'waiting-files';
                 job.terminalChildScanCount = 0;
                 touchAndSave(job);
                 finishTick();
-            } else if (!job.childGid && (task.status === 'complete' || task.status === 'error' ||
-                task.status === 'removed')) {
+            } else if (task.followedBy && task.followedBy.length > 1) {
+                job.stage = 'waiting-metadata';
+                job.terminalChildScanCount = 0;
+                touchAndSave(job);
+                finishTick();
+            } else if (!job.childGid && (task.status === 'complete' || task.status === 'error')) {
                 recoverMetadataChild(job, rpcIdentity, task.status);
             } else {
                 job.stage = 'waiting-metadata';

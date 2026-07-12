@@ -341,7 +341,9 @@ var isBtMetadataUrl = function (url) {
     if (/^magnet:\?/i.test(normalized)) {
         return true;
     }
-    return /^https?:\/\//i.test(normalized) && /\.torrent(?:[?#]|$)/i.test(normalized);
+
+    var urlWithoutQueryOrFragment = normalized.split(/[?#]/)[0];
+    return /^https?:\/\/[^/?#]+\/.*\.torrent$/i.test(urlWithoutQueryOrFragment);
 };
 ```
 
@@ -444,9 +446,11 @@ Expected: FAIL because `start()` has no processing lifecycle.
 On each non-overlapping tick, select jobs for `getCurrentRpcIdentity()`. Resolve `job.childGid || job.rootGid` with `getTaskStatus`:
 
 ```js
-if (task.bittorrent && task.files && task.files.length > 0) {
+if (task.status === 'removed') {
+    removeDeletedJob(job);
+} else if (task.bittorrent && task.files && task.files.length > 0) {
     processBtTask(job, task);
-} else if (task.followedBy && task.followedBy.length > 0) {
+} else if (task.followedBy && task.followedBy.length === 1) {
     job.childGid = task.followedBy[0];
     job.stage = 'waiting-files';
     saveJobs();
@@ -480,7 +484,7 @@ On filter failure, increment and persist `retryCount`. Before each retry, fetch 
 }
 ```
 
-Only after restoration succeeds may Download Now unpause and the job be removed as a warning/fallback outcome. This makes a lost RPC response safe across reloads.
+Only after restoration succeeds may Download Now unpause and the job be removed as a warning/fallback outcome. Restoration preserves the task's original cleanup value and never newly enables cleanup. This makes a lost RPC response safe across reloads.
 
 - [ ] **Step 5: Implement toolbar aggregate status and auto-hide**
 
@@ -713,7 +717,8 @@ Add a following status item that is not route-limited:
     title="{{btFileFilterStatus.textKey | translate: btFileFilterStatus.textParams}}">
     <i class="fa" ng-class="{'fa-spinner fa-spin': btFileFilterStatus.type === 'processing' || btFileFilterStatus.type === 'waiting' || btFileFilterStatus.type === 'resuming', 'fa-check-circle': btFileFilterStatus.type === 'complete', 'fa-exclamation-triangle': btFileFilterStatus.type === 'warning'}"></i>
     <span class="bt-file-filter-status-full" ng-bind="btFileFilterStatus.textKey | translate: btFileFilterStatus.textParams"></span>
-    <span class="bt-file-filter-status-compact" ng-bind="('format.bt-file-filter.compact' | translate: {count: btFileFilterStatus.waiting || (btFileFilterStatus.total - btFileFilterStatus.processed)})"></span>
+    <span class="bt-file-filter-status-compact"
+          ng-bind="('format.bt-file-filter.compact' | translate: {count: btFileFilterStatus.type === 'warning' ? btFileFilterStatus.fallback : (btFileFilterStatus.type === 'complete' ? (btFileFilterStatus.filtered + btFileFilterStatus.full) : btFileFilterStatus.total)})"></span>
 </li>
 ```
 
