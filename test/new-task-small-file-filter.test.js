@@ -1703,6 +1703,8 @@ test('defers fallback notification while the current batch is still waiting', fu
     }
 
     assert.strictEqual(context.notifications.length, 0);
+    assert.strictEqual(context.service.getStatus().type, 'waiting');
+    assert.strictEqual(context.service.getStatus().textParams.count, 1);
     assert.strictEqual(context.getSavedQueue().length, 2);
     assert(context.getSavedQueue().some(function (job) {
         return job.rootGid === 'waiting' && job.stage === 'waiting-metadata';
@@ -2249,15 +2251,20 @@ test('renders the remembered filter and global toolbar status', function () {
     assert(traditionalChinese.includes('Exclude BT task files smaller than=排除 BT 工作中小於'));
 });
 
-test('compact filter status reports an outcome appropriate to each terminal state', function () {
+test('compact filter status reports the count appropriate to each lifecycle state', function () {
     const index = read('src/index.html');
     const simplifiedChinese = read('src/langs/zh_Hans.txt');
+    const compactStatusStart = index.indexOf('<span class="bt-file-filter-status-compact"');
+    const compactStatus = index.slice(compactStatusStart, index.indexOf('</span>', compactStatusStart));
 
-    assert(index.includes("'format.bt-file-filter.compact.' + btFileFilterStatus.type"));
-    assert(index.includes("btFileFilterStatus.type === 'warning' ? btFileFilterStatus.fallback"));
-    assert(index.includes("btFileFilterStatus.type === 'complete' ? (btFileFilterStatus.filtered + btFileFilterStatus.full)"));
-    assert(index.includes(': btFileFilterStatus.total') || index.includes(': (btFileFilterStatus.total)'));
-    assert(!index.includes('btFileFilterStatus.total - btFileFilterStatus.processed'));
+    assert(compactStatusStart >= 0);
+    assert(compactStatus.includes("'format.bt-file-filter.compact.' + btFileFilterStatus.type"));
+    assert(compactStatus.includes("btFileFilterStatus.type === 'warning' ? btFileFilterStatus.fallback"));
+    assert(compactStatus.includes("btFileFilterStatus.type === 'complete' ? (btFileFilterStatus.filtered + btFileFilterStatus.full)"));
+    assert(compactStatus.includes('processing: btFileFilterStatus.total'));
+    assert(compactStatus.includes('waiting: btFileFilterStatus.textParams.count'));
+    assert(compactStatus.includes('resuming: btFileFilterStatus.textParams.count'));
+    assert(!compactStatus.includes('btFileFilterStatus.total - btFileFilterStatus.processed'));
     assert(simplifiedChinese.includes('format.bt-file-filter.compact.resuming=恢复 {{count}}'));
     assert(simplifiedChinese.includes('format.bt-file-filter.compact.waiting=等待 {{count}}'));
     assert(simplifiedChinese.includes('format.bt-file-filter.compact.processing=处理中 {{count}}'));
