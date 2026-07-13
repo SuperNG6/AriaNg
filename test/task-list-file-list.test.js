@@ -330,6 +330,29 @@ test('does not let basic refreshes overtake a pending file detail refresh', func
     assert.deepStrictEqual(context.requests.map(function (request) { return request.full; }), [true, true, false]);
 });
 
+test('recovers refreshing when a pending file detail response is never delivered', function () {
+    const context = loadListController('downloading');
+
+    // Simulate a lost RPC response (e.g. WebSocket closed with auto-reconnect
+    // disabled): the second full request is issued but its callback never fires.
+    context.deferNextRequest();
+    context.tick(5000);
+    context.tick(1000);
+
+    assert.deepStrictEqual(context.requests.map(function (request) { return request.full; }), [true, true]);
+
+    // While the pending request is still within the timeout window, later ticks
+    // stay blocked so a basic refresh cannot overtake the pending full request.
+    context.tick(20000);
+    assert.strictEqual(context.requests.length, 2);
+
+    // Once the pending request is older than the timeout, refreshing recovers on
+    // its own without waiting for the lost callback.
+    context.tick(10000);
+    assert.strictEqual(context.requests.length, 3);
+    assert.strictEqual(context.requests[2].full, true);
+});
+
 test('does not rebuild active virtual file trees on basic ticks', function () {
     const context = loadListController('downloading');
     const initialFiles = context.rootScope.taskContext.list[0].files;

@@ -9,7 +9,7 @@ on:
       version:
         description: Version to release (without a v prefix)
         required: true
-        default: '2.1.0'
+        default: '2.1.1'
         type: string
 
 permissions:
@@ -47,11 +47,13 @@ jobs:
 
       - name: Validate version and release state
         shell: bash
+        env:
+          RELEASE_INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ inputs.version }}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            VERSION="$RELEASE_INPUT_VERSION"
           else
             VERSION="${GITHUB_REF_NAME}"
           fi
@@ -74,7 +76,7 @@ jobs:
             exit 1
           fi
 
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             REMOTE_TAG="$(git ls-remote --tags origin "refs/tags/$VERSION")"
 
             if [[ -n "$REMOTE_TAG" ]]; then

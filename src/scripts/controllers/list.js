@@ -12,6 +12,8 @@
         var taskFileListRefreshInterval = 5000;
         var lastTaskFileListRequestTime = null;
         var pendingWholeInfoRequestId = null;
+        var pendingWholeInfoRequestTime = null;
+        var pendingWholeInfoTimeout = 30000;
 
         var collapsedFileDirs = {};
 
@@ -102,7 +104,20 @@
             var modeGeneration = downloadTaskModeGeneration;
 
             if (pendingWholeInfoRequestId !== null) {
-                return;
+                var pendingElapsed = pendingWholeInfoRequestTime === null
+                    ? Number.POSITIVE_INFINITY
+                    : currentTime - pendingWholeInfoRequestTime;
+
+                // A lost RPC response (e.g. a WebSocket closed with auto-reconnect
+                // disabled, whose pending callback never fires) would otherwise
+                // freeze every later refresh. Expire a stale pending request, and
+                // also recover if the wall clock rolls backward.
+                if (pendingElapsed >= 0 && pendingElapsed < pendingWholeInfoTimeout) {
+                    return;
+                }
+
+                pendingWholeInfoRequestId = null;
+                pendingWholeInfoRequestTime = null;
             }
 
             var requestId = ++downloadTaskRequestId;
@@ -112,11 +127,13 @@
             }
             if (requestWholeInfo) {
                 pendingWholeInfoRequestId = requestId;
+                pendingWholeInfoRequestTime = currentTime;
             }
 
             return aria2TaskService.getTaskList(location, requestWholeInfo, function (response) {
                 if (pendingWholeInfoRequestId === requestId) {
                     pendingWholeInfoRequestId = null;
+                    pendingWholeInfoRequestTime = null;
                 }
 
                 if (pauseDownloadTaskRefresh || modeGeneration !== downloadTaskModeGeneration || requestId <= latestAppliedDownloadTaskRequestId) {
@@ -295,6 +312,7 @@
             downloadTaskModeGeneration++;
             needRequestWholeInfo = !!enabled;
             pendingWholeInfoRequestId = null;
+            pendingWholeInfoRequestTime = null;
             $rootScope.loadPromise = refreshDownloadTask(false);
         });
 

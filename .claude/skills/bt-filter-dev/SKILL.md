@@ -73,6 +73,7 @@ When bumping the release version: update `package.json`, `package-lock.json`, th
 - **`getPendingGidStageMap` maps both root and child gid by design.** Both rows of an in-flight magnet/BT (root metadata + child download) may briefly show the badge — this is correct (same in-flight download).
 - **Controller dependency stubs.** Adding a dependency to a controller requires adding a stub in every `test/*.test.js` that loads that controller (e.g. `ariaNgBtFileFilterService.getPendingGidStageMap` returns `{}` in `task-list-file-list.test.js`).
 - **No 0-based index "fix".** aria2 file indexes are 1-based; `normalizeIndexes` rejecting `<= 0` is correct.
+- **`pendingWholeInfoRequestId` must not block refreshing forever.** `DownloadListController` skips a refresh tick while a whole-info request is in flight so a basic refresh cannot overtake a pending file-detail request. But if that RPC response is never delivered (e.g. a WebSocket closed with auto-reconnect disabled, whose pending callback never fires), the guard would freeze every later refresh. The guard therefore expires a pending request older than `pendingWholeInfoTimeout` (30s) and also recovers on a backward wall-clock jump (`pendingElapsed >= 0`). Regression: `test/task-list-file-list.test.js` → "recovers refreshing when a pending file detail response is never delivered".
 
 ## 6. Diagnosis recipe for a stuck badge
 

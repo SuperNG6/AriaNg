@@ -242,6 +242,7 @@ const loadFilterService = function (options) {
     const timeouts = [];
     const changedOptions = [];
     const startedGids = [];
+    const pausedGids = [];
     const notifications = [];
     const statusGids = [];
     const pendingStatusCallbacks = [];
@@ -258,6 +259,7 @@ const loadFilterService = function (options) {
     const optionResponses = (options.optionResponses || []).slice();
     const changeResponses = (options.changeResponses || []).slice();
     const startResponses = (options.startResponses || []).slice();
+    const pauseResponses = (options.pauseResponses || []).slice();
     const constants = loadConstants();
     const module = {
         factory: function (name, definition) {
@@ -384,6 +386,18 @@ const loadFilterService = function (options) {
                 } else {
                     callback(response);
                 }
+            },
+            pauseTasks: function (gids, callback) {
+                pausedGids.push.apply(pausedGids, gids);
+                const response = pauseResponses.length > 0 ? pauseResponses.shift() : {success: true, data: 'OK'};
+                if ((response.success || response.hasSuccess) && options.applySuccessfulPause !== false) {
+                    gids.forEach(function (gid) {
+                        if (tasks[gid]) {
+                            tasks[gid].status = 'paused';
+                        }
+                    });
+                }
+                callback(response);
             }
         }
     };
@@ -397,6 +411,7 @@ const loadFilterService = function (options) {
         service: service,
         changedOptions: changedOptions,
         startedGids: startedGids,
+        pausedGids: pausedGids,
         notifications: notifications,
         statusGids: statusGids,
         optionRpcIdentities: optionRpcIdentities,
@@ -1076,12 +1091,9 @@ test('does not mistake an active magnet metadata file for the final BT task', fu
     assert.strictEqual(context.service.getStatus().full, 0);
 });
 
-test('recovers a magnet child that has already moved to the active queue without staying stuck', function () {
+test('Download Later pauses a recovered active magnet child before filtering', function () {
     const context = loadFilterService({
         tasks: {
-            root: {gid: 'root', status: 'complete', followedBy: ['child'], bittorrent: {}, files: [
-                {index: '1', path: '[METADATA]hash', length: '232531', selected: 'true'}
-            ]},
             child: {gid: 'child', status: 'active', following: 'root', bittorrent: {mode: 'multi'}, files: [
                 {index: '1', length: '1048576', selected: 'true'},
                 {index: '2', length: '209715200', selected: 'true'}
@@ -1094,7 +1106,14 @@ test('recovers a magnet child that has already moved to the active queue without
 
     context.service.enqueue('root', {thresholdBytes: 104857600, startAfterFilter: false, sourceType: 'magnet'});
     context.service.start();
-    context.tickUntilIdle();
+    context.tick();
+    context.tick();
+
+    assert.deepStrictEqual(context.pausedGids, ['child']);
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.deepStrictEqual(context.startedGids, []);
+
+    context.tick();
 
     assert.deepStrictEqual(context.changedOptions, [{
         gid: 'child',
@@ -1103,6 +1122,57 @@ test('recovers a magnet child that has already moved to the active queue without
     assert.strictEqual(context.getSavedQueue().length, 0);
     assert.strictEqual(context.service.getStatus().filtered, 1);
     assert.strictEqual(context.service.getStatus().full, 0);
+});
+
+test('Download Later pauses a waiting BT child before filtering', function () {
+    const context = loadFilterService({
+        tasks: {task: {gid: 'task', status: 'waiting', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]}},
+        taskOptions: {'bt-remove-unselected-file': 'false'}
+    });
+
+    context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'torrent'});
+    context.service.start();
+    context.tick();
+
+    assert.deepStrictEqual(context.pausedGids, ['task']);
+    assert.deepStrictEqual(context.changedOptions, []);
+
+    context.tick();
+
+    assert.deepStrictEqual(context.changedOptions, [{
+        gid: 'task',
+        options: {'select-file': '2', 'bt-remove-unselected-file': 'true'}
+    }]);
+    assert.deepStrictEqual(context.startedGids, []);
+});
+
+test('immediate download filters a recovered active magnet child without unpausing it', function () {
+    const context = loadFilterService({
+        tasks: {
+            child: {gid: 'child', status: 'active', following: 'root', bittorrent: {mode: 'multi'}, files: [
+                {index: '1', length: '1048576', selected: 'true'},
+                {index: '2', length: '209715200', selected: 'true'}
+            ]}
+        },
+        taskOptions: {'bt-remove-unselected-file': 'false'},
+        waitingTasks: [],
+        activeTasks: [{gid: 'child', following: 'root'}]
+    });
+
+    context.service.enqueue('root', {thresholdBytes: 104857600, startAfterFilter: true, sourceType: 'magnet'});
+    context.service.start();
+    context.tickUntilIdle();
+
+    assert.deepStrictEqual(context.changedOptions, [{
+        gid: 'child',
+        options: {'select-file': '2', 'bt-remove-unselected-file': 'true'}
+    }]);
+    assert.deepStrictEqual(context.pausedGids, []);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(context.service.getStatus().filtered, 1);
 });
 
 test('silently removes a job when aggregate unpause reports a nested missing GID', function () {
@@ -1347,6 +1417,36 @@ test('three failed filter calls restore full selection and cleanup before fallba
     assert.strictEqual(context.notifications.length, 1);
     assert.strictEqual(context.notifications[0].options.type, 'warning');
     assert.strictEqual(context.timeouts[0].delay, 10000);
+});
+
+test('third uncertain filter response reconciles before restoring full selection', function () {
+    const context = loadFilterService({
+        tasks: {task: {gid: 'task', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '209715200', selected: 'true'}
+        ]}},
+        taskOptions: {'bt-remove-unselected-file': 'false'},
+        changeResponses: [
+            {success: false, data: {message: 'network'}},
+            {success: false, data: {message: 'network'}},
+            {success: false, data: {message: 'connection closed'}}
+        ],
+        applyFailedChanges: function (callNumber) { return callNumber === 3; }
+    });
+    context.service.enqueue('task', {thresholdBytes: 104857600, startAfterFilter: false, sourceType: 'torrent'});
+    context.service.start();
+    context.tickUntilIdle();
+
+    assert.strictEqual(context.changedOptions.length, 3);
+    context.changedOptions.forEach(function (change) {
+        assert.deepStrictEqual(change.options, {
+            'select-file': '2', 'bt-remove-unselected-file': 'true'
+        });
+    });
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(context.service.getStatus().filtered, 1);
+    assert.strictEqual(context.service.getStatus().fallback, 0);
+    assert.strictEqual(context.getSavedQueue().length, 0);
 });
 
 test('tellStatus network failure retains the job without consuming filter retries', function () {

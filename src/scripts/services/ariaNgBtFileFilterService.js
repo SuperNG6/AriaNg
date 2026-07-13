@@ -491,20 +491,20 @@
             finishTick();
         };
 
-        var startOrComplete = function (job, gid, outcome, rpcIdentity) {
+        var startOrComplete = function (job, task, outcome, rpcIdentity) {
             if (!isJobOnCurrentRpc(job, rpcIdentity)) {
                 finishTick();
                 return;
             }
 
-            if (!job.startAfterFilter) {
+            if (!job.startAfterFilter || task.status !== 'paused') {
                 completeJob(job, outcome, rpcIdentity);
                 return;
             }
 
             job.stage = 'starting-' + outcome;
             touchAndSave(job);
-            aria2TaskService.startTasks([gid], function (response) {
+            aria2TaskService.startTasks([task.gid], function (response) {
                 if (!isJobOnCurrentRpc(job, rpcIdentity)) {
                     finishTick();
                     return;
@@ -536,7 +536,7 @@
                 return;
             }
 
-            startOrComplete(job, task.gid, outcome, rpcIdentity);
+            startOrComplete(job, task, outcome, rpcIdentity);
         };
 
         var processRestoration = function (job, task, plan, rpcIdentity) {
@@ -569,7 +569,7 @@
                 }
                 if (job.restoreAttempted && sameIndexes(task.files, allIndexes) &&
                     getOptionValue(currentOptions, 'bt-remove-unselected-file', 'false') === job.originalRemoveUnselectedFile) {
-                    startOrComplete(job, task.gid, outcome, rpcIdentity);
+                    startOrComplete(job, task, outcome, rpcIdentity);
                     return;
                 }
 
@@ -585,7 +585,7 @@
                     }
 
                     if (response && response.success) {
-                        startOrComplete(job, task.gid, outcome, rpcIdentity);
+                        startOrComplete(job, task, outcome, rpcIdentity);
                     } else if (isNotFoundResponse(response)) {
                         removeDeletedJob(job, rpcIdentity);
                     } else {
@@ -625,7 +625,16 @@
 
                 if (job.stage === 'applying-filter' && sameIndexes(task.files, plan.selectedIndexes) &&
                     String(currentOptions['bt-remove-unselected-file']) === 'true') {
-                    startOrComplete(job, task.gid, 'filtered', rpcIdentity);
+                    startOrComplete(job, task, 'filtered', rpcIdentity);
+                    return;
+                }
+
+                if (job.stage === 'applying-filter' && job.retryCount >= 3) {
+                    job.stage = 'restoring-full';
+                    job.restoreAttempted = false;
+                    job.restorationOutcome = 'fallback';
+                    touchAndSave(job);
+                    processRestoration(job, task, plan, rpcIdentity);
                     return;
                 }
 
@@ -641,16 +650,11 @@
                     }
 
                     if (response && response.success) {
-                        startOrComplete(job, task.gid, 'filtered', rpcIdentity);
+                        startOrComplete(job, task, 'filtered', rpcIdentity);
                     } else if (isNotFoundResponse(response)) {
                         removeDeletedJob(job, rpcIdentity);
                     } else {
                         job.retryCount++;
-                        if (job.retryCount >= 3) {
-                            job.stage = 'restoring-full';
-                            job.restoreAttempted = false;
-                            job.restorationOutcome = 'fallback';
-                        }
                         touchAndSave(job);
                         finishTick();
                     }
@@ -677,8 +681,30 @@
                 touchAndSave(job);
                 processRestoration(job, task, plan, rpcIdentity);
             } else {
-                startOrComplete(job, task.gid, 'full', rpcIdentity);
+                startOrComplete(job, task, 'full', rpcIdentity);
             }
+        };
+
+        var pauseForDownloadLater = function (job, task, rpcIdentity) {
+            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                finishTick();
+                return;
+            }
+
+            aria2TaskService.pauseTasks([task.gid], function (response) {
+                if (!isJobOnCurrentRpc(job, rpcIdentity)) {
+                    finishTick();
+                    return;
+                }
+
+                if (isSuccessfulResponse(response)) {
+                    finishTick();
+                } else if (isNotFoundResponse(response)) {
+                    removeDeletedJob(job, rpcIdentity);
+                } else {
+                    finishTick();
+                }
+            }, true);
         };
 
         var settleAbsentMetadataChild = function (job, rpcIdentity, terminalStatus) {
@@ -863,7 +889,11 @@
                 touchAndSave(job);
                 finishTick();
             } else if (task.bittorrent && task.files && task.files.length > 0) {
-                processBtTask(job, task, rpcIdentity);
+                if (!job.startAfterFilter && (task.status === 'active' || task.status === 'waiting')) {
+                    pauseForDownloadLater(job, task, rpcIdentity);
+                } else {
+                    processBtTask(job, task, rpcIdentity);
+                }
             } else {
                 job.stage = 'waiting-metadata';
                 touchAndSave(job);

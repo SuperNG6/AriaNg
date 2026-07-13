@@ -100,6 +100,8 @@ gulp clean build-bundle
 ## 📚 文档
 - [English](http://ariang.mayswind.net)
 - [简体中文](http://ariang.mayswind.net/zh_Hans)
+- [维护 PRD：任务列表内嵌文件列表](docs/prd/task-list-file-list.md)
+- [维护 PRD：新建 BT 任务小文件过滤](docs/prd/bt-small-file-filter.md)
 
 ## 🎬 Demo
 [http://ariang.mayswind.net/latest](http://ariang.mayswind.net/latest)
