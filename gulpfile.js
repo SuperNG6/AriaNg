@@ -20,7 +20,8 @@ gulp.task('lint', () => gulp.src([
     .pipe(gulp.dest('src/scripts')));
 
 gulp.task('prepare-fonts', () => gulp.src([
-    'node_modules/font-awesome/fonts/fontawesome-webfont.*'
+    'node_modules/font-awesome/fonts/fontawesome-webfont.*',
+    'node_modules/bootstrap/dist/fonts/glyphicons-halflings-regular.*'
 ]).pipe(gulp.dest('.tmp/fonts')));
 
 gulp.task('process-fonts', gulp.series('prepare-fonts', () => gulp.src([
@@ -94,15 +95,14 @@ gulp.task('process-assets-bundle', gulp.series('prepare-fonts', 'prepare-langs',
         const content = fs.readFileSync('.tmp/' + fileName, 'utf8');
         return '<script type="application/javascript">' + content + '</script>';
     }))
-    .pipe($.replace(/url\(\.\.\/(fonts\/[a-zA-Z0-9\-]+\.woff2?)(\?[a-zA-Z0-9\-_=.]+)?\)/g, (match, fileName) => {
-        if (!fs.existsSync('.tmp/' + fileName)) {
-            return match;
-        }
-
-        const contentBuffer = fs.readFileSync('.tmp/' + fileName);
-        const contentBase64 = contentBuffer.toString('base64');
-        const mimeType = fileName.endsWith('.woff2') ? 'font/woff2' : 'font/woff';
-        return 'url(data:' + mimeType + ';base64,' + contentBase64 + ')';
+    .pipe($.replace(/@font-face\{font-family:("Glyphicons Halflings"|FontAwesome);[^}]*url\(\.\.\/fonts\/([a-zA-Z0-9\-]+)\.woff(?:\?[^)]*)?\)[^}]*\}/g,
+        (match, fontFamily, fileName) => {
+            const content = fs.readFileSync('.tmp/fonts/' + fileName + '.woff').toString('base64');
+            return '@font-face{font-family:' + fontFamily + ';src:url(data:font/woff;base64,' + content +
+                ') format("woff");font-weight:400;font-style:normal}';
+    }))
+    .pipe($.replace(/\.\.\/fonts\//g, () => {
+        throw new Error('All-In-One build contains an external font reference');
     }))
     .pipe($.replace(/<link rel="icon" href="([a-zA-Z0-9\-_.]+\.png)">/g, (match, fileName) => {
         if (!fs.existsSync('.tmp/' + fileName)) {
