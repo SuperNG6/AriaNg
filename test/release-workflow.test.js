@@ -11,8 +11,8 @@ const workflow = fs.readFileSync(workflowPath, 'utf8');
 const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const packageLock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
 
-assert.strictEqual(packageJson.version, '2.1.1');
-assert.strictEqual(packageLock.version, '2.1.1');
+assert.strictEqual(packageJson.version, '2.1.2');
+assert.strictEqual(packageLock.version, '2.1.2');
 
 [
     'workflow_dispatch:',

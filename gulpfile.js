@@ -94,14 +94,15 @@ gulp.task('process-assets-bundle', gulp.series('prepare-fonts', 'prepare-langs',
         const content = fs.readFileSync('.tmp/' + fileName, 'utf8');
         return '<script type="application/javascript">' + content + '</script>';
     }))
-    .pipe($.replace(/url\(\.\.\/(fonts\/[a-zA-Z0-9\-]+\.woff)(\?[a-zA-Z0-9\-_=.]+)?\)/g, (match, fileName) => {
+    .pipe($.replace(/url\(\.\.\/(fonts\/[a-zA-Z0-9\-]+\.woff2?)(\?[a-zA-Z0-9\-_=.]+)?\)/g, (match, fileName) => {
         if (!fs.existsSync('.tmp/' + fileName)) {
             return match;
         }
 
         const contentBuffer = fs.readFileSync('.tmp/' + fileName);
         const contentBase64 = contentBuffer.toString('base64');
-        return 'url(data:application/x-font-woff;base64,' + contentBase64 + ')';
+        const mimeType = fileName.endsWith('.woff2') ? 'font/woff2' : 'font/woff';
+        return 'url(data:' + mimeType + ';base64,' + contentBase64 + ')';
     }))
     .pipe($.replace(/<link rel="icon" href="([a-zA-Z0-9\-_.]+\.png)">/g, (match, fileName) => {
         if (!fs.existsSync('.tmp/' + fileName)) {
