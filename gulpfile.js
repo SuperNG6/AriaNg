@@ -163,7 +163,7 @@ gulp.task('build', gulp.series('lint', 'process-fonts', 'process-langs', 'proces
 
 gulp.task('build-bundle', gulp.series('lint', 'process-assets-bundle', 'process-tiny-extras', 'info'));
 
-gulp.task('serve', gulp.series('prepare-styles', 'prepare-scripts', 'prepare-fonts', () => {
+gulp.task('serve', gulp.series('prepare-styles', 'prepare-scripts', 'prepare-fonts', 'prepare-views', () => {
     browserSync({
         notify: false,
         port: 9000,
@@ -180,7 +180,6 @@ gulp.task('serve', gulp.series('prepare-styles', 'prepare-scripts', 'prepare-fon
         'src/*.ico',
         'src/*.png',
         'src/langs/*.txt',
-        'src/views/*.html',
         'src/imgs/**/*',
         '.tmp/fonts/**/*'
     ]).on('change', reload);
@@ -188,6 +187,10 @@ gulp.task('serve', gulp.series('prepare-styles', 'prepare-scripts', 'prepare-fon
     gulp.watch('src/styles/**/*.css', gulp.series('prepare-styles'));
     gulp.watch('src/scripts/**/*.js', gulp.series('prepare-scripts'));
     gulp.watch('src/fonts/**/*', gulp.series('prepare-fonts'));
+    gulp.watch('src/views/**/*.html', gulp.series('prepare-views', (done) => {
+        reload();
+        done();
+    }));
 }));
 
 gulp.task('serve:dist', () => {

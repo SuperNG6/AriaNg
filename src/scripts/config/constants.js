@@ -6,6 +6,8 @@
         appPrefix: 'AriaNg',
         optionStorageKey: 'Options',
         btFileFilterQueueStorageKey: 'BtFileFilterQueue',
+        btFileFilterBulkQueueStorageKey: 'BtFileFilterBulkQueue',
+        btFileFilterBulkProgressStorageKey: 'BtFileFilterBulkProgress',
         browserNotificationHistoryStorageKey: 'Notifications',
         languageStorageKeyPrefix: 'Language',
         settingHistoryKeyPrefix: 'History',

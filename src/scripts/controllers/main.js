@@ -82,6 +82,7 @@
             minSizeMb: ariaNgSettingService.getBtFileFilterMinSizeMb()
         };
         $scope.btFileFilterStatus = ariaNgBtFileFilterService.getStatus();
+        $scope.bulkBtFileFilterStatus = ariaNgBtFileFilterService.getBulkStatus();
 
         $scope.isNewTaskPage = function () {
             return $location.path() === '/new';
@@ -464,6 +465,11 @@
 
         $scope.isTaskListFileListEnabled = function () {
             return ariaNgSettingService.getShowFileListInTaskListPage();
+        };
+
+        $scope.showBulkBtFileFilterGlobalStatus = function () {
+            return $scope.bulkBtFileFilterStatus.visible &&
+                !($location.path() === '/downloading' && $scope.isTaskListFileListEnabled());
         };
 
         $scope.toggleTaskListFileList = function () {

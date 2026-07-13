@@ -3,7 +3,11 @@
 
     angular.module('ariaNg').factory('ariaNgBtFileFilterService', ['$interval', '$timeout', 'ariaNgConstants', 'ariaNgStorageService', 'ariaNgSettingService', 'ariaNgNotificationService', 'ariaNgLogService', 'aria2TaskService', function ($interval, $timeout, ariaNgConstants, ariaNgStorageService, ariaNgSettingService, ariaNgNotificationService, ariaNgLogService, aria2TaskService) {
         var storageKey = ariaNgConstants.btFileFilterQueueStorageKey;
+        var bulkStorageKey = ariaNgConstants.btFileFilterBulkQueueStorageKey;
+        var bulkProgressStorageKey = ariaNgConstants.btFileFilterBulkProgressStorageKey;
         var storedJobs = ariaNgStorageService.get(storageKey);
+        var storedBulkDefinitions = ariaNgStorageService.get(bulkStorageKey);
+        var storedBulkProgresses = ariaNgStorageService.get(bulkProgressStorageKey);
         var allowedSourceTypes = ['magnet', 'remote-torrent', 'torrent'];
         var allowedStages = [
             'waiting-metadata', 'waiting-files', 'applying-filter', 'restoring-full',
@@ -12,6 +16,7 @@
         ];
         var missingRootScanLimit = 3;
         var pollingInterval = 250;
+        var allowedBulkStages = ['inspecting', 'applying', 'restoring'];
 
         var normalizeInteger = function (value, defaultValue) {
             var number = Number(value);
@@ -24,9 +29,11 @@
             }
 
             var indexes = [];
+            var seenIndexes = {};
             for (var i = 0; i < value.length; i++) {
                 var index = Number(value[i]);
-                if (isFinite(index) && index > 0 && index === Math.floor(index) && indexes.indexOf(index) < 0) {
+                if (isFinite(index) && index > 0 && index === Math.floor(index) && !seenIndexes[index]) {
+                    seenIndexes[index] = true;
                     indexes.push(index);
                 }
             }
@@ -41,6 +48,11 @@
                 return false;
             }
             return null;
+        };
+
+        var normalizeInfoHash = function (value) {
+            var normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+            return /^[0-9a-f]{40}$/.test(normalized) ? normalized : '';
         };
 
         var sanitizeJob = function (job) {
@@ -90,10 +102,18 @@
             if (job.restoreAttempted) {
                 sanitized.restoreAttempted = true;
             }
+            if (job.preserveExistingSelection) {
+                sanitized.preserveExistingSelection = true;
+            }
             if (job.restorationOutcome === 'full' || job.restorationOutcome === 'fallback') {
                 sanitized.restorationOutcome = job.restorationOutcome;
             } else if (job.stage === 'restoring-full') {
                 sanitized.restorationOutcome = 'fallback';
+            }
+
+            var infoHash = normalizeInfoHash(job.infoHash);
+            if (infoHash) {
+                sanitized.infoHash = infoHash;
             }
 
             return sanitized;
@@ -113,7 +133,153 @@
             return sanitized;
         };
 
+        var sanitizeBulkDefinition = function (definition) {
+            if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
+                return null;
+            }
+            var rpcIdentity = typeof definition.rpcIdentity === 'string' ? definition.rpcIdentity.trim() : '';
+            var thresholdBytes = Number(definition.thresholdBytes);
+            if (!rpcIdentity || !isFinite(thresholdBytes) || thresholdBytes <= 0 ||
+                !Array.isArray(definition.gids)) {
+                return null;
+            }
+
+            var gids = [];
+            var seenGids = {};
+            for (var i = 0; i < definition.gids.length; i++) {
+                var gid = typeof definition.gids[i] === 'string' ? definition.gids[i].trim() : '';
+                if (gid && !seenGids[gid]) {
+                    seenGids[gid] = true;
+                    gids.push(gid);
+                }
+            }
+            if (gids.length < 1) {
+                return null;
+            }
+
+            return {
+                rpcIdentity: rpcIdentity,
+                thresholdBytes: thresholdBytes,
+                gids: gids,
+                createdAt: normalizeInteger(definition.createdAt, Date.now())
+            };
+        };
+
+        var sanitizeBulkDefinitions = function (value) {
+            var sanitized = [];
+            if (!Array.isArray(value)) {
+                return sanitized;
+            }
+            for (var i = 0; i < value.length; i++) {
+                var definition = sanitizeBulkDefinition(value[i]);
+                if (definition && !sanitized.some(function (item) {
+                    return item.rpcIdentity === definition.rpcIdentity;
+                })) {
+                    sanitized.push(definition);
+                }
+            }
+            return sanitized;
+        };
+
+        var sanitizeBulkCurrent = function (current) {
+            if (!current || typeof current !== 'object' || Array.isArray(current) ||
+                typeof current.gid !== 'string' || allowedBulkStages.indexOf(current.stage) < 0) {
+                return null;
+            }
+            var sanitized = {
+                gid: current.gid.trim(),
+                stage: current.stage,
+                retryCount: normalizeInteger(current.retryCount, 0),
+                restoreRetryCount: normalizeInteger(current.restoreRetryCount, 0),
+                filteredFileCount: normalizeInteger(current.filteredFileCount, 0)
+            };
+            if (!sanitized.gid) {
+                return null;
+            }
+            var original = normalizeIndexes(current.originalSelectedIndexes);
+            var target = normalizeIndexes(current.targetSelectedIndexes);
+            if (original.length > 0) {
+                sanitized.originalSelectedIndexes = original;
+            }
+            if (target.length > 0) {
+                sanitized.targetSelectedIndexes = target;
+            }
+            if (typeof current.originalRemoveUnselectedFile !== 'undefined') {
+                sanitized.originalRemoveUnselectedFile = String(current.originalRemoveUnselectedFile);
+            }
+            if (typeof current.targetRemoveUnselectedFile !== 'undefined') {
+                sanitized.targetRemoveUnselectedFile = String(current.targetRemoveUnselectedFile);
+            }
+            if (sanitized.stage !== 'inspecting' && (!sanitized.originalSelectedIndexes ||
+                !sanitized.targetSelectedIndexes ||
+                typeof sanitized.originalRemoveUnselectedFile === 'undefined' ||
+                typeof sanitized.targetRemoveUnselectedFile === 'undefined')) {
+                return null;
+            }
+            return sanitized;
+        };
+
+        var sanitizeBulkProgress = function (progress, definitions) {
+            if (!progress || typeof progress !== 'object' || Array.isArray(progress) ||
+                typeof progress.rpcIdentity !== 'string') {
+                return null;
+            }
+            var definition = null;
+            for (var i = 0; i < definitions.length; i++) {
+                if (definitions[i].rpcIdentity === progress.rpcIdentity) {
+                    definition = definitions[i];
+                    break;
+                }
+            }
+            if (!definition) {
+                return null;
+            }
+
+            var cursor = normalizeInteger(progress.cursor, 0);
+            if (cursor > definition.gids.length) {
+                cursor = definition.gids.length;
+            }
+            var sanitized = {
+                rpcIdentity: definition.rpcIdentity,
+                cursor: cursor,
+                processed: normalizeInteger(progress.processed, 0),
+                filtered: normalizeInteger(progress.filtered, 0),
+                skipped: normalizeInteger(progress.skipped, 0),
+                failed: normalizeInteger(progress.failed, 0),
+                filteredFiles: normalizeInteger(progress.filteredFiles, 0),
+                current: sanitizeBulkCurrent(progress.current)
+            };
+            if (sanitized.current && (cursor >= definition.gids.length ||
+                sanitized.current.gid !== definition.gids[cursor])) {
+                sanitized.current = null;
+            }
+            return sanitized;
+        };
+
+        var sanitizeBulkProgresses = function (value, definitions) {
+            var sanitized = [];
+            if (!Array.isArray(value)) {
+                return sanitized;
+            }
+            for (var i = 0; i < value.length; i++) {
+                var progress = sanitizeBulkProgress(value[i], definitions);
+                if (progress && !sanitized.some(function (item) {
+                    return item.rpcIdentity === progress.rpcIdentity;
+                })) {
+                    sanitized.push(progress);
+                }
+            }
+            return sanitized;
+        };
+
         var jobs = sanitizeQueue(storedJobs);
+        var bulkDefinitions = sanitizeBulkDefinitions(storedBulkDefinitions);
+        var bulkProgresses = sanitizeBulkProgresses(storedBulkProgresses, bulkDefinitions);
+        bulkDefinitions = bulkDefinitions.filter(function (definition) {
+            return bulkProgresses.some(function (progress) {
+                return progress.rpcIdentity === definition.rpcIdentity;
+            });
+        });
         var serializedStoredJobs;
         var serializedJobs = JSON.stringify(jobs);
         try {
@@ -123,6 +289,12 @@
         }
         if (serializedStoredJobs !== serializedJobs) {
             ariaNgStorageService.set(storageKey, jobs);
+        }
+        if (JSON.stringify(storedBulkDefinitions) !== JSON.stringify(bulkDefinitions)) {
+            ariaNgStorageService.set(bulkStorageKey, bulkDefinitions);
+        }
+        if (JSON.stringify(storedBulkProgresses) !== JSON.stringify(bulkProgresses)) {
+            ariaNgStorageService.set(bulkProgressStorageKey, bulkProgresses);
         }
         var status = {
             visible: false,
@@ -136,11 +308,27 @@
             textKey: '',
             textParams: {}
         };
+        var bulkStatus = {
+            visible: false,
+            type: 'idle',
+            completionId: 0,
+            total: 0,
+            processed: 0,
+            filtered: 0,
+            skipped: 0,
+            failed: 0,
+            filteredFiles: 0
+        };
+        var bulkStatusRpcIdentity = null;
+        var bulkStatusVersion = 0;
         var pollingPromise = null;
         var tickInProgress = false;
+        var activeOperation = null;
+        var lifecycleGeneration = 0;
         var restoredQueue = jobs.length > 0;
         var activeRpcIdentity = null;
         var pollCursor = 0;
+        var automaticJobTurn = true;
         var statusVersion = 0;
         var aggregate = {
             total: 0,
@@ -187,8 +375,184 @@
             };
         };
 
+        var getRealFiles = function (files) {
+            var realFiles = [];
+            if (!Array.isArray(files)) {
+                return realFiles;
+            }
+
+            for (var i = 0; i < files.length; i++) {
+                var index = Number(files[i].index);
+                var length = Number(files[i].length);
+                if (!files[i].isDir && isFinite(index) && index > 0 && index === Math.floor(index) &&
+                    isFinite(length) && length >= 0) {
+                    realFiles.push(files[i]);
+                }
+            }
+            return realFiles;
+        };
+
+        var isBtPayloadTask = function (task) {
+            return !!(task && task.seeder !== true && String(task.seeder) !== 'true' &&
+                typeof task.verifiedLength === 'undefined' &&
+                String(task.verifyIntegrityPending) !== 'true' &&
+                normalizeInfoHash(task.infoHash) && task.bittorrent && task.bittorrent.info &&
+                getRealFiles(task.files).length > 0);
+        };
+
+        var isActiveBtPayloadTask = function (task) {
+            return !!(task && task.status === 'active' && isBtPayloadTask(task));
+        };
+
+        var planExistingTaskFiles = function (files, thresholdBytes) {
+            var originalSelectedIndexes = [];
+            var targetSelectedIndexes = [];
+            var allIndexes = [];
+            var realFileCount = 0;
+
+            for (var i = 0; Array.isArray(files) && i < files.length; i++) {
+                var index = Number(files[i].index);
+                var length = Number(files[i].length);
+                if (files[i].isDir || !isFinite(index) || index <= 0 || index !== Math.floor(index) ||
+                    !isFinite(length) || length < 0) {
+                    continue;
+                }
+                var selected = String(files[i].selected) === 'true';
+                realFileCount++;
+                allIndexes.push(index);
+                if (selected) {
+                    originalSelectedIndexes.push(index);
+                    if (length >= thresholdBytes) {
+                        targetSelectedIndexes.push(index);
+                    }
+                }
+            }
+
+            var mode = 'unchanged';
+            if (originalSelectedIndexes.length > 0 && targetSelectedIndexes.length === 0) {
+                mode = 'all-small';
+            } else if (targetSelectedIndexes.length > 0 &&
+                targetSelectedIndexes.length < originalSelectedIndexes.length) {
+                mode = 'filter';
+            }
+
+            return {
+                mode: mode,
+                originalSelectedIndexes: originalSelectedIndexes,
+                targetSelectedIndexes: targetSelectedIndexes,
+                allIndexes: allIndexes,
+                filteredFileCount: originalSelectedIndexes.length - targetSelectedIndexes.length,
+                realFileCount: realFileCount
+            };
+        };
+
+        var getAutomaticOwnedGids = function (rpcIdentity) {
+            var automaticGids = {};
+            for (var jobIndex = 0; jobIndex < jobs.length; jobIndex++) {
+                if (jobs[jobIndex].rpcIdentity !== rpcIdentity || isTerminalJob(jobs[jobIndex])) {
+                    continue;
+                }
+                automaticGids[jobs[jobIndex].rootGid] = true;
+                if (jobs[jobIndex].childGid) {
+                    automaticGids[jobs[jobIndex].childGid] = true;
+                }
+            }
+            return automaticGids;
+        };
+
+        var isTaskOwnedByAutomaticJob = function (task, automaticGids) {
+            return !!task && (!!automaticGids[task.gid] || !!automaticGids[task.following]);
+        };
+
+        var getBulkPreview = function (tasks, thresholdBytes) {
+            var gids = [];
+            var fileCount = 0;
+            var automaticGids = getAutomaticOwnedGids(getCurrentRpcIdentity());
+            if (!Array.isArray(tasks) || !isFinite(thresholdBytes) || thresholdBytes <= 0) {
+                return {gids: gids, taskCount: 0, fileCount: 0};
+            }
+
+            for (var i = 0; i < tasks.length; i++) {
+                var task = tasks[i];
+                if (!task || isTaskOwnedByAutomaticJob(task, automaticGids) ||
+                    task.status !== 'active' || task.seeder === true ||
+                    String(task.seeder) === 'true' || typeof task.verifiedLength !== 'undefined' ||
+                    String(task.verifyIntegrityPending) === 'true' || !normalizeInfoHash(task.infoHash) ||
+                    !task.bittorrent || !task.bittorrent.info) {
+                    continue;
+                }
+                var plan = planExistingTaskFiles(task.files, thresholdBytes);
+                if (plan.realFileCount > 0 && plan.mode === 'filter') {
+                    gids.push(task.gid);
+                    fileCount += plan.filteredFileCount;
+                }
+            }
+
+            return {gids: gids, taskCount: gids.length, fileCount: fileCount};
+        };
+
         var saveJobs = function () {
             ariaNgStorageService.set(storageKey, jobs);
+        };
+
+        var saveBulkDefinitions = function () {
+            return ariaNgStorageService.set(bulkStorageKey, bulkDefinitions);
+        };
+
+        var saveBulkProgresses = function () {
+            return ariaNgStorageService.set(bulkProgressStorageKey, bulkProgresses);
+        };
+
+        var findBulkDefinition = function (rpcIdentity) {
+            for (var i = 0; i < bulkDefinitions.length; i++) {
+                if (bulkDefinitions[i].rpcIdentity === rpcIdentity) {
+                    return bulkDefinitions[i];
+                }
+            }
+            return null;
+        };
+
+        var findBulkProgress = function (rpcIdentity) {
+            for (var i = 0; i < bulkProgresses.length; i++) {
+                if (bulkProgresses[i].rpcIdentity === rpcIdentity) {
+                    return bulkProgresses[i];
+                }
+            }
+            return null;
+        };
+
+        var setBulkIdleStatus = function () {
+            bulkStatusVersion++;
+            bulkStatus.visible = false;
+            bulkStatus.type = 'idle';
+            bulkStatus.total = 0;
+            bulkStatus.processed = 0;
+            bulkStatus.filtered = 0;
+            bulkStatus.skipped = 0;
+            bulkStatus.failed = 0;
+            bulkStatus.filteredFiles = 0;
+        };
+
+        var updateBulkRunningStatus = function () {
+            var rpcIdentity = getCurrentRpcIdentity();
+            var definition = findBulkDefinition(rpcIdentity);
+            var progress = findBulkProgress(rpcIdentity);
+            if (!definition || !progress) {
+                if (bulkStatus.type !== 'complete') {
+                    setBulkIdleStatus();
+                }
+                return;
+            }
+
+            bulkStatus.visible = true;
+            bulkStatusVersion++;
+            bulkStatus.type = 'running';
+            bulkStatus.total = definition.gids.length;
+            bulkStatus.processed = progress.processed;
+            bulkStatus.filtered = progress.filtered;
+            bulkStatus.skipped = progress.skipped;
+            bulkStatus.failed = progress.failed;
+            bulkStatus.filteredFiles = progress.filteredFiles;
         };
 
         var isTerminalJob = function (job) {
@@ -197,6 +561,23 @@
 
         var getCurrentRpcIdentity = function () {
             return ariaNgSettingService.getCurrentRpcIdentity();
+        };
+
+        var createOperationContext = function (rpcIdentity) {
+            return {
+                rpcIdentity: rpcIdentity,
+                generation: lifecycleGeneration
+            };
+        };
+
+        var getOperationRpcIdentity = function (operation) {
+            return operation && typeof operation === 'object' ? operation.rpcIdentity : operation;
+        };
+
+        var isOperationCurrent = function (operation) {
+            return !!(operation && typeof operation === 'object' &&
+                operation.generation === lifecycleGeneration &&
+                operation.rpcIdentity === getCurrentRpcIdentity());
         };
 
         var getCurrentRecords = function () {
@@ -296,6 +677,7 @@
         var resetAggregate = function () {
             var currentRecords = getCurrentRecords();
             pollCursor = 0;
+            automaticJobTurn = true;
             aggregate.total = currentRecords.length;
             aggregate.processed = 0;
             aggregate.filtered = 0;
@@ -317,6 +699,7 @@
                 return false;
             }
 
+            lifecycleGeneration++;
             activeRpcIdentity = rpcIdentity;
             resetAggregate();
             var currentJobCount = getCurrentJobs().length;
@@ -327,11 +710,16 @@
                     setIdleStatus();
                 }
             }
+            bulkStatusRpcIdentity = rpcIdentity;
+            setBulkIdleStatus();
+            updateBulkRunningStatus();
             return true;
         };
 
         var isJobOnCurrentRpc = function (job, rpcIdentity) {
-            return job.rpcIdentity === rpcIdentity && getCurrentRpcIdentity() === rpcIdentity && jobs.indexOf(job) >= 0;
+            var identity = getOperationRpcIdentity(rpcIdentity);
+            return isOperationCurrent(rpcIdentity) && job.rpcIdentity === identity &&
+                jobs.indexOf(job) >= 0;
         };
 
         var getOptionValue = function (options, key, defaultValue) {
@@ -407,7 +795,11 @@
             return true;
         };
 
-        var finishTick = function () {
+        var finishTick = function (operation) {
+            if (activeOperation !== operation) {
+                return;
+            }
+            activeOperation = null;
             tickInProgress = false;
             synchronizeRpcIdentity();
             if (getCurrentJobs().length > 0) {
@@ -417,7 +809,7 @@
 
         var removeDeletedJob = function (job, rpcIdentity) {
             if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick();
+                finishTick(rpcIdentity);
                 return;
             }
 
@@ -432,7 +824,7 @@
                     setIdleStatus();
                 }
             }
-            finishTick();
+            finishTick(rpcIdentity);
         };
 
         var notifyFallback = function () {
@@ -474,7 +866,7 @@
 
         var completeJob = function (job, outcome, rpcIdentity) {
             if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick();
+                finishTick(rpcIdentity);
                 return;
             }
 
@@ -488,12 +880,12 @@
             } else {
                 updateActiveStatus();
             }
-            finishTick();
+            finishTick(rpcIdentity);
         };
 
         var startOrComplete = function (job, task, outcome, rpcIdentity) {
             if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick();
+                finishTick(rpcIdentity);
                 return;
             }
 
@@ -506,7 +898,7 @@
             touchAndSave(job);
             aria2TaskService.startTasks([task.gid], function (response) {
                 if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                    finishTick();
+                    finishTick(rpcIdentity);
                     return;
                 }
 
@@ -515,14 +907,14 @@
                 } else if (isNotFoundResponse(response)) {
                     removeDeletedJob(job, rpcIdentity);
                 } else {
-                    finishTick();
+                    finishTick(rpcIdentity);
                 }
             }, true);
         };
 
         var processStartingJob = function (job, task, rpcIdentity) {
             if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick();
+                finishTick(rpcIdentity);
                 return;
             }
 
@@ -541,7 +933,7 @@
 
         var processRestoration = function (job, task, plan, rpcIdentity) {
             if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick();
+                finishTick(rpcIdentity);
                 return;
             }
 
@@ -550,7 +942,7 @@
             var fullSelection = allIndexes.join(',');
             aria2TaskService.getTaskOptions(task.gid, function (optionsResponse) {
                 if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                    finishTick();
+                    finishTick(rpcIdentity);
                     return;
                 }
 
@@ -558,7 +950,7 @@
                     if (isNotFoundResponse(optionsResponse)) {
                         removeDeletedJob(job, rpcIdentity);
                     } else {
-                        finishTick();
+                        finishTick(rpcIdentity);
                     }
                     return;
                 }
@@ -580,7 +972,7 @@
                     'bt-remove-unselected-file': job.originalRemoveUnselectedFile
                 }, function (response) {
                     if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                        finishTick();
+                        finishTick(rpcIdentity);
                         return;
                     }
 
@@ -589,7 +981,7 @@
                     } else if (isNotFoundResponse(response)) {
                         removeDeletedJob(job, rpcIdentity);
                     } else {
-                        finishTick();
+                        finishTick(rpcIdentity);
                     }
                 }, true);
             }, true);
@@ -597,13 +989,13 @@
 
         var processMixedTask = function (job, task, plan, rpcIdentity) {
             if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick();
+                finishTick(rpcIdentity);
                 return;
             }
 
             aria2TaskService.getTaskOptions(task.gid, function (optionsResponse) {
                 if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                    finishTick();
+                    finishTick(rpcIdentity);
                     return;
                 }
 
@@ -611,7 +1003,7 @@
                     if (isNotFoundResponse(optionsResponse)) {
                         removeDeletedJob(job, rpcIdentity);
                     } else {
-                        finishTick();
+                        finishTick(rpcIdentity);
                     }
                     return;
                 }
@@ -623,8 +1015,12 @@
                 job.selectedIndexes = plan.selectedIndexes;
                 job.allIndexes = plan.allIndexes;
 
+                var targetRemoveUnselectedFile = job.preserveExistingSelection &&
+                    plan.allIndexes.length < getRealFiles(task.files).length ?
+                    job.originalRemoveUnselectedFile : 'true';
                 if (job.stage === 'applying-filter' && sameIndexes(task.files, plan.selectedIndexes) &&
-                    String(currentOptions['bt-remove-unselected-file']) === 'true') {
+                    getOptionValue(currentOptions, 'bt-remove-unselected-file', 'false') ===
+                        targetRemoveUnselectedFile) {
                     startOrComplete(job, task, 'filtered', rpcIdentity);
                     return;
                 }
@@ -642,10 +1038,10 @@
                 touchAndSave(job);
                 aria2TaskService.changeTaskOptions(task.gid, {
                     'select-file': plan.selectedIndexes.join(','),
-                    'bt-remove-unselected-file': 'true'
+                    'bt-remove-unselected-file': targetRemoveUnselectedFile
                 }, function (response) {
                     if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                        finishTick();
+                        finishTick(rpcIdentity);
                         return;
                     }
 
@@ -656,7 +1052,7 @@
                     } else {
                         job.retryCount++;
                         touchAndSave(job);
-                        finishTick();
+                        finishTick(rpcIdentity);
                     }
                 }, true);
             }, true);
@@ -664,11 +1060,21 @@
 
         var processBtTask = function (job, task, rpcIdentity) {
             if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick();
+                finishTick(rpcIdentity);
                 return;
             }
 
-            var plan = planFiles(task.files, job.thresholdBytes);
+            var plan;
+            if (job.preserveExistingSelection) {
+                var existingPlan = planExistingTaskFiles(task.files, job.thresholdBytes);
+                plan = {
+                    mode: existingPlan.mode === 'filter' ? 'filter' : 'all-large',
+                    selectedIndexes: existingPlan.targetSelectedIndexes,
+                    allIndexes: existingPlan.originalSelectedIndexes
+                };
+            } else {
+                plan = planFiles(task.files, job.thresholdBytes);
+            }
             if (job.stage === 'restoring-full') {
                 processRestoration(job, task, plan, rpcIdentity);
             } else if (plan.mode === 'filter') {
@@ -687,22 +1093,22 @@
 
         var pauseForDownloadLater = function (job, task, rpcIdentity) {
             if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick();
+                finishTick(rpcIdentity);
                 return;
             }
 
             aria2TaskService.pauseTasks([task.gid], function (response) {
                 if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                    finishTick();
+                    finishTick(rpcIdentity);
                     return;
                 }
 
                 if (isSuccessfulResponse(response)) {
-                    finishTick();
+                    finishTick(rpcIdentity);
                 } else if (isNotFoundResponse(response)) {
                     removeDeletedJob(job, rpcIdentity);
                 } else {
-                    finishTick();
+                    finishTick(rpcIdentity);
                 }
             }, true);
         };
@@ -711,41 +1117,76 @@
             removeDeletedJob(job, rpcIdentity);
         };
 
+        var addRecoveryCandidate = function (map, key, gid) {
+            if (!key || !gid) {
+                return;
+            }
+            if (!map[key]) {
+                map[key] = [];
+            }
+            if (map[key].indexOf(gid) < 0) {
+                map[key].push(gid);
+            }
+        };
+
+        var buildRecoveryCandidates = function (tasks) {
+            var candidates = {
+                byRootGid: {},
+                byInfoHash: {}
+            };
+
+            for (var i = 0; i < tasks.length; i++) {
+                addRecoveryCandidate(candidates.byRootGid, tasks[i].following, tasks[i].gid);
+                addRecoveryCandidate(candidates.byInfoHash, normalizeInfoHash(tasks[i].infoHash), tasks[i].gid);
+            }
+
+            return candidates;
+        };
+
+        var mergeRecoveryCandidates = function (first, second) {
+            var merged = (first || []).slice();
+            var additional = second || [];
+            for (var i = 0; i < additional.length; i++) {
+                if (merged.indexOf(additional[i]) < 0) {
+                    merged.push(additional[i]);
+                }
+            }
+            return merged;
+        };
+
+        var adoptRecoveredChild = function (job, childGid, preserveExistingSelection) {
+            job.childGid = childGid;
+            job.stage = 'waiting-files';
+            if (preserveExistingSelection) {
+                job.preserveExistingSelection = true;
+            }
+            job.missingRootScanCount = 0;
+            job.terminalChildScanCount = 0;
+            job.updatedAt = Date.now();
+        };
+
         var recoverMetadataChild = function (job, rpcIdentity, terminalStatus) {
             aria2TaskService.getTaskList('waiting', true, function (response) {
                 if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                    finishTick();
+                    finishTick(rpcIdentity);
                     return;
                 }
 
                 if (!response || !response.success) {
-                    finishTick();
+                    finishTick(rpcIdentity);
                     return;
                 }
 
-                var waitingTasks = response.data || [];
-                var childGidsByRoot = {};
-                for (var i = 0; i < waitingTasks.length; i++) {
-                    if (waitingTasks[i].following) {
-                        if (!childGidsByRoot[waitingTasks[i].following]) {
-                            childGidsByRoot[waitingTasks[i].following] = [];
-                        }
-                        childGidsByRoot[waitingTasks[i].following].push(waitingTasks[i].gid);
-                    }
-                }
+                var waitingCandidates = buildRecoveryCandidates(response.data || []);
 
                 var currentJobs = getCurrentJobs();
                 var recoveredCurrentJob = false;
                 var recoveredAnyJob = false;
-                for (var j = 0; j < currentJobs.length; j++) {
-                    var currentJob = currentJobs[j];
-                    var childGids = childGidsByRoot[currentJob.rootGid] || [];
+                for (var i = 0; i < currentJobs.length; i++) {
+                    var currentJob = currentJobs[i];
+                    var childGids = waitingCandidates.byRootGid[currentJob.rootGid] || [];
                     if (!currentJob.childGid && childGids.length === 1) {
-                        currentJob.childGid = childGids[0];
-                        currentJob.stage = 'waiting-files';
-                        currentJob.missingRootScanCount = 0;
-                        currentJob.terminalChildScanCount = 0;
-                        currentJob.updatedAt = Date.now();
+                        adoptRecoveredChild(currentJob, childGids[0]);
                         recoveredAnyJob = true;
                         recoveredCurrentJob = recoveredCurrentJob || currentJob === job;
                     }
@@ -756,58 +1197,78 @@
                 }
 
                 if (recoveredCurrentJob) {
-                    finishTick();
+                    finishTick(rpcIdentity);
                     return;
                 }
 
-                var currentChildGids = childGidsByRoot[job.rootGid] || [];
+                var currentChildGids = waitingCandidates.byRootGid[job.rootGid] || [];
                 if (currentChildGids.length > 1) {
                     job.missingRootScanCount = 0;
                     job.terminalChildScanCount = 0;
                     touchAndSave(job);
-                    finishTick();
+                    finishTick(rpcIdentity);
                     return;
                 }
 
-                finishTickAndRecoverActiveChild(job, rpcIdentity, terminalStatus);
-            }, true, ['gid', 'following']);
+                finishTickAndRecoverActiveChild(job, rpcIdentity, terminalStatus,
+                    waitingCandidates.byInfoHash);
+            }, true, ['gid', 'following', 'infoHash']);
         };
 
-        var recoverActiveChild = function (job, rpcIdentity, terminalStatus) {
+        var recoverActiveChild = function (job, rpcIdentity, terminalStatus, waitingGidsByInfoHash) {
             aria2TaskService.getTaskList('downloading', true, function (response) {
                 if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                    finishTick();
+                    finishTick(rpcIdentity);
                     return;
                 }
 
                 if (!response || !response.success) {
-                    finishTick();
+                    finishTick(rpcIdentity);
                     return;
                 }
 
-                var activeTasks = response.data || [];
-                var childGidsByRoot = {};
-                for (var i = 0; i < activeTasks.length; i++) {
-                    if (activeTasks[i].following) {
-                        if (!childGidsByRoot[activeTasks[i].following]) {
-                            childGidsByRoot[activeTasks[i].following] = [];
-                        }
-                        childGidsByRoot[activeTasks[i].following].push(activeTasks[i].gid);
-                    }
-                }
+                var activeCandidates = buildRecoveryCandidates(response.data || []);
 
                 var currentJobs = getCurrentJobs();
                 var recoveredAnyJob = false;
                 var recoveredCurrentJob = false;
+                var ambiguousCurrentInfoHash = false;
+                var duplicateCurrentJob = false;
+                var infoHashJobCounts = {};
+                var ownedChildGids = {};
+                var currentRecords = getCurrentRecords();
+                for (var i = 0; i < currentRecords.length; i++) {
+                    if (currentRecords[i].childGid) {
+                        ownedChildGids[currentRecords[i].childGid] = true;
+                    }
+                }
+                for (i = 0; i < currentJobs.length; i++) {
+                    if (currentJobs[i].infoHash) {
+                        infoHashJobCounts[currentJobs[i].infoHash] =
+                            (infoHashJobCounts[currentJobs[i].infoHash] || 0) + 1;
+                    }
+                }
+
                 for (var j = 0; j < currentJobs.length; j++) {
                     var currentJob = currentJobs[j];
-                    var childGids = childGidsByRoot[currentJob.rootGid] || [];
+                    var childGids = activeCandidates.byRootGid[currentJob.rootGid] || [];
+                    var recoveredByInfoHash = false;
+                    if (!currentJob.childGid && childGids.length < 1 && currentJob.infoHash) {
+                        childGids = mergeRecoveryCandidates(
+                            waitingGidsByInfoHash[currentJob.infoHash],
+                            activeCandidates.byInfoHash[currentJob.infoHash]
+                        );
+                        recoveredByInfoHash = childGids.length > 0;
+                        if (childGids.length > 1 || infoHashJobCounts[currentJob.infoHash] > 1) {
+                            ambiguousCurrentInfoHash = ambiguousCurrentInfoHash || currentJob === job;
+                            childGids = [];
+                        } else if (childGids.length === 1 && ownedChildGids[childGids[0]]) {
+                            duplicateCurrentJob = duplicateCurrentJob || currentJob === job;
+                            childGids = [];
+                        }
+                    }
                     if (!currentJob.childGid && childGids.length === 1) {
-                        currentJob.childGid = childGids[0];
-                        currentJob.stage = 'waiting-files';
-                        currentJob.missingRootScanCount = 0;
-                        currentJob.terminalChildScanCount = 0;
-                        currentJob.updatedAt = Date.now();
+                        adoptRecoveredChild(currentJob, childGids[0], recoveredByInfoHash);
                         recoveredAnyJob = true;
                         recoveredCurrentJob = recoveredCurrentJob || currentJob === job;
                     }
@@ -818,7 +1279,20 @@
                 }
 
                 if (recoveredCurrentJob) {
-                    finishTick();
+                    finishTick(rpcIdentity);
+                    return;
+                }
+
+                if (duplicateCurrentJob) {
+                    removeDeletedJob(job, rpcIdentity);
+                    return;
+                }
+
+                if (ambiguousCurrentInfoHash) {
+                    job.missingRootScanCount = 0;
+                    job.terminalChildScanCount = 0;
+                    touchAndSave(job);
+                    finishTick(rpcIdentity);
                     return;
                 }
 
@@ -830,17 +1304,18 @@
                 }
                 touchAndSave(job);
 
-                finishTick();
-            }, true, ['gid', 'following']);
+                finishTick(rpcIdentity);
+            }, true, ['gid', 'following', 'infoHash']);
         };
 
-        var finishTickAndRecoverActiveChild = function (job, rpcIdentity, terminalStatus) {
-            recoverActiveChild(job, rpcIdentity, terminalStatus);
+        var finishTickAndRecoverActiveChild = function (job, rpcIdentity, terminalStatus,
+            waitingGidsByInfoHash) {
+            recoverActiveChild(job, rpcIdentity, terminalStatus, waitingGidsByInfoHash || {});
         };
 
         var processTaskResponse = function (job, response, rpcIdentity) {
             if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick();
+                finishTick(rpcIdentity);
                 return;
             }
 
@@ -852,7 +1327,7 @@
                         removeDeletedJob(job, rpcIdentity);
                     }
                 } else {
-                    finishTick();
+                    finishTick(rpcIdentity);
                 }
                 return;
             }
@@ -869,6 +1344,16 @@
 
             var isMetadataRoot = !job.childGid &&
                 (job.sourceType === 'magnet' || job.sourceType === 'remote-torrent');
+            var taskInfoHash = normalizeInfoHash(task.infoHash);
+            var isDuplicateInfoHashRoot = isMetadataRoot && task.status === 'error' &&
+                String(task.errorCode) === '12' && taskInfoHash;
+            if (isDuplicateInfoHashRoot && job.infoHash !== taskInfoHash) {
+                job.infoHash = taskInfoHash;
+                touchAndSave(job);
+            } else if (isMetadataRoot && job.infoHash && !isDuplicateInfoHashRoot) {
+                delete job.infoHash;
+                touchAndSave(job);
+            }
             if (job.stage.indexOf('starting-') === 0) {
                 processStartingJob(job, task, rpcIdentity);
             } else if (isMetadataRoot && task.followedBy && task.followedBy.length === 1) {
@@ -876,20 +1361,21 @@
                 job.stage = 'waiting-files';
                 job.terminalChildScanCount = 0;
                 touchAndSave(job);
-                finishTick();
+                finishTick(rpcIdentity);
             } else if (isMetadataRoot && task.followedBy && task.followedBy.length > 1) {
                 job.stage = 'waiting-metadata';
                 job.terminalChildScanCount = 0;
                 touchAndSave(job);
-                finishTick();
+                finishTick(rpcIdentity);
             } else if (isMetadataRoot && (task.status === 'complete' || task.status === 'error')) {
                 recoverMetadataChild(job, rpcIdentity, task.status);
             } else if (isMetadataRoot) {
                 job.stage = 'waiting-metadata';
                 touchAndSave(job);
-                finishTick();
+                finishTick(rpcIdentity);
             } else if (task.bittorrent && task.files && task.files.length > 0) {
-                if (!job.startAfterFilter && (task.status === 'active' || task.status === 'waiting')) {
+                if (!job.startAfterFilter && !job.preserveExistingSelection &&
+                    (task.status === 'active' || task.status === 'waiting')) {
                     pauseForDownloadLater(job, task, rpcIdentity);
                 } else {
                     processBtTask(job, task, rpcIdentity);
@@ -897,8 +1383,365 @@
             } else {
                 job.stage = 'waiting-metadata';
                 touchAndSave(job);
-                finishTick();
+                finishTick(rpcIdentity);
             }
+        };
+
+        var isBulkRunOnCurrentRpc = function (definition, progress, rpcIdentity) {
+            var identity = getOperationRpcIdentity(rpcIdentity);
+            return isOperationCurrent(rpcIdentity) &&
+                bulkDefinitions.indexOf(definition) >= 0 && bulkProgresses.indexOf(progress) >= 0 &&
+                definition.rpcIdentity === identity && progress.rpcIdentity === identity;
+        };
+
+        var finishBulkTick = function (operation) {
+            if (activeOperation !== operation) {
+                return;
+            }
+            activeOperation = null;
+            tickInProgress = false;
+            synchronizeRpcIdentity();
+            updateBulkRunningStatus();
+        };
+
+        var completeBulkRun = function (definition, progress, rpcIdentity) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+
+            var progressIndex = bulkProgresses.indexOf(progress);
+            bulkProgresses.splice(progressIndex, 1);
+            if (!saveBulkProgresses()) {
+                bulkProgresses.splice(progressIndex, 0, progress);
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+
+            bulkDefinitions.splice(bulkDefinitions.indexOf(definition), 1);
+            saveBulkDefinitions();
+
+            bulkStatusRpcIdentity = getOperationRpcIdentity(rpcIdentity);
+            bulkStatusVersion++;
+            bulkStatus.visible = true;
+            bulkStatus.type = 'complete';
+            bulkStatus.completionId++;
+            bulkStatus.total = definition.gids.length;
+            bulkStatus.processed = progress.processed;
+            bulkStatus.filtered = progress.filtered;
+            bulkStatus.skipped = progress.skipped;
+            bulkStatus.failed = progress.failed;
+            bulkStatus.filteredFiles = progress.filteredFiles;
+            var completionStatusVersion = bulkStatusVersion;
+            $timeout(function () {
+                if (bulkStatusVersion === completionStatusVersion && bulkStatus.type === 'complete') {
+                    bulkStatus.visible = false;
+                }
+            }, 5000);
+            if (activeOperation === rpcIdentity) {
+                activeOperation = null;
+                tickInProgress = false;
+            }
+        };
+
+        var settleBulkCurrent = function (definition, progress, outcome, rpcIdentity) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+
+            var current = progress.current;
+            var previous = {
+                cursor: progress.cursor,
+                processed: progress.processed,
+                filtered: progress.filtered,
+                skipped: progress.skipped,
+                failed: progress.failed,
+                filteredFiles: progress.filteredFiles,
+                current: current
+            };
+            progress.processed++;
+            progress.cursor++;
+            progress[outcome]++;
+            if (outcome === 'filtered') {
+                progress.filteredFiles += current.filteredFileCount || 0;
+            }
+            progress.current = null;
+            if (!saveBulkProgresses()) {
+                progress.cursor = previous.cursor;
+                progress.processed = previous.processed;
+                progress.filtered = previous.filtered;
+                progress.skipped = previous.skipped;
+                progress.failed = previous.failed;
+                progress.filteredFiles = previous.filteredFiles;
+                progress.current = previous.current;
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+
+            if (progress.cursor >= definition.gids.length) {
+                completeBulkRun(definition, progress, rpcIdentity);
+            } else {
+                automaticJobTurn = true;
+                updateBulkRunningStatus();
+                finishBulkTick(rpcIdentity);
+            }
+        };
+
+        var applyBulkOptions = function (definition, progress, task, rpcIdentity) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+
+            var current = progress.current;
+            current.stage = 'applying';
+            current.retryCount++;
+            if (!saveBulkProgresses()) {
+                settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                return;
+            }
+
+            aria2TaskService.changeTaskOptions(task.gid, {
+                'select-file': current.targetSelectedIndexes.join(','),
+                'bt-remove-unselected-file': current.targetRemoveUnselectedFile
+            }, function (response) {
+                if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                    finishBulkTick(rpcIdentity);
+                    return;
+                }
+                if (isSuccessfulResponse(response)) {
+                    settleBulkCurrent(definition, progress, 'filtered', rpcIdentity);
+                } else if (isNotFoundResponse(response)) {
+                    settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                } else {
+                    finishBulkTick(rpcIdentity);
+                }
+            }, true);
+        };
+
+        var restoreBulkOptions = function (definition, progress, task, options, rpcIdentity) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+            var current = progress.current;
+            if (sameIndexes(task.files, current.originalSelectedIndexes) &&
+                getOptionValue(options, 'bt-remove-unselected-file', 'false') ===
+                    current.originalRemoveUnselectedFile) {
+                settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                return;
+            }
+
+            if (current.restoreRetryCount >= 3) {
+                settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                return;
+            }
+
+            var previousRestoreRetryCount = current.restoreRetryCount;
+            current.restoreRetryCount++;
+            if (!saveBulkProgresses()) {
+                current.restoreRetryCount = previousRestoreRetryCount;
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+
+            aria2TaskService.changeTaskOptions(task.gid, {
+                'select-file': current.originalSelectedIndexes.join(','),
+                'bt-remove-unselected-file': current.originalRemoveUnselectedFile
+            }, function (response) {
+                if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                    finishBulkTick(rpcIdentity);
+                    return;
+                }
+                if (isSuccessfulResponse(response)) {
+                    settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                } else if (isNotFoundResponse(response)) {
+                    settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                } else {
+                    finishBulkTick(rpcIdentity);
+                }
+            }, true);
+        };
+
+        var beginBulkRestoration = function (definition, progress, task, options, rpcIdentity) {
+            var current = progress.current;
+            var previousRestoreRetryCount = current.restoreRetryCount;
+            current.stage = 'restoring';
+            current.restoreRetryCount = 0;
+            if (!saveBulkProgresses()) {
+                current.stage = 'applying';
+                current.restoreRetryCount = previousRestoreRetryCount;
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+            restoreBulkOptions(definition, progress, task, options, rpcIdentity);
+        };
+
+        var applyBulkInspection = function (definition, progress, task, options, rpcIdentity) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+            if (isTaskOwnedByAutomaticJob(task,
+                getAutomaticOwnedGids(getOperationRpcIdentity(rpcIdentity))) ||
+                !isActiveBtPayloadTask(task)) {
+                settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                return;
+            }
+
+            var current = progress.current;
+            var plan = planExistingTaskFiles(task.files, definition.thresholdBytes);
+            if (plan.mode !== 'filter') {
+                settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                return;
+            }
+            var originalCleanup = getOptionValue(options, 'bt-remove-unselected-file', 'false');
+            current.originalSelectedIndexes = plan.originalSelectedIndexes;
+            current.targetSelectedIndexes = plan.targetSelectedIndexes;
+            current.originalRemoveUnselectedFile = originalCleanup;
+            current.targetRemoveUnselectedFile = plan.originalSelectedIndexes.length === plan.allIndexes.length ?
+                'true' : originalCleanup;
+            current.filteredFileCount = plan.filteredFileCount;
+            applyBulkOptions(definition, progress, task, rpcIdentity);
+        };
+
+        var inspectBulkTaskAfterOptions = function (definition, progress, options, rpcIdentity) {
+            aria2TaskService.getTaskStatus(progress.current.gid, function (response) {
+                if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                    finishBulkTick(rpcIdentity);
+                    return;
+                }
+                if (!response || !response.success) {
+                    if (isNotFoundResponse(response)) {
+                        settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                    } else {
+                        finishBulkTick(rpcIdentity);
+                    }
+                    return;
+                }
+                applyBulkInspection(definition, progress, response.data, options, rpcIdentity);
+            }, true);
+        };
+
+        var inspectBulkOptions = function (definition, progress, task, rpcIdentity) {
+            aria2TaskService.getTaskOptions(task.gid, function (response) {
+                if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                    finishBulkTick(rpcIdentity);
+                    return;
+                }
+                if (!response || !response.success) {
+                    if (isNotFoundResponse(response)) {
+                        settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                    } else {
+                        finishBulkTick(rpcIdentity);
+                    }
+                    return;
+                }
+
+                var current = progress.current;
+                var options = response.data || {};
+                if (current.stage === 'restoring') {
+                    restoreBulkOptions(definition, progress, task, options, rpcIdentity);
+                    return;
+                }
+                if (current.stage === 'applying') {
+                    if (sameIndexes(task.files, current.targetSelectedIndexes) &&
+                        getOptionValue(options, 'bt-remove-unselected-file', 'false') ===
+                            current.targetRemoveUnselectedFile) {
+                        settleBulkCurrent(definition, progress, 'filtered', rpcIdentity);
+                    } else if (!isActiveBtPayloadTask(task)) {
+                        if (sameIndexes(task.files, current.originalSelectedIndexes) &&
+                            getOptionValue(options, 'bt-remove-unselected-file', 'false') ===
+                                current.originalRemoveUnselectedFile) {
+                            settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                        } else {
+                            beginBulkRestoration(definition, progress, task, options, rpcIdentity);
+                        }
+                    } else if (current.retryCount >= 3) {
+                        beginBulkRestoration(definition, progress, task, options, rpcIdentity);
+                    } else {
+                        applyBulkOptions(definition, progress, task, rpcIdentity);
+                    }
+                    return;
+                }
+                applyBulkInspection(definition, progress, task, options, rpcIdentity);
+            }, true);
+        };
+
+        var processBulkTaskResponse = function (definition, progress, response, rpcIdentity) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+            if (!response || !response.success) {
+                if (isNotFoundResponse(response)) {
+                    settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                } else {
+                    finishBulkTick(rpcIdentity);
+                }
+                return;
+            }
+
+            var task = response.data;
+            var current = progress.current;
+            if (current.stage === 'inspecting' &&
+                (isTaskOwnedByAutomaticJob(task,
+                    getAutomaticOwnedGids(getOperationRpcIdentity(rpcIdentity))) ||
+                    !isActiveBtPayloadTask(task))) {
+                settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                return;
+            }
+            if (current.stage !== 'inspecting' && (!task.bittorrent || !task.bittorrent.info ||
+                getRealFiles(task.files).length < 1)) {
+                settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                return;
+            }
+            inspectBulkOptions(definition, progress, task, rpcIdentity);
+        };
+
+        var processBulkTick = function (definition, progress, rpcIdentity) {
+            if (!progress.current) {
+                if (progress.cursor >= definition.gids.length) {
+                    completeBulkRun(definition, progress, rpcIdentity);
+                    return;
+                }
+                progress.current = {
+                    gid: definition.gids[progress.cursor],
+                    stage: 'inspecting',
+                    retryCount: 0,
+                    restoreRetryCount: 0,
+                    filteredFileCount: 0
+                };
+                if (!saveBulkProgresses()) {
+                    progress.current = null;
+                    finishBulkTick(rpcIdentity);
+                    return;
+                }
+            }
+
+            if (progress.current.stage === 'inspecting') {
+                aria2TaskService.getTaskOptions(progress.current.gid, function (response) {
+                    if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                        finishBulkTick(rpcIdentity);
+                        return;
+                    }
+                    if (!response || !response.success) {
+                        if (isNotFoundResponse(response)) {
+                            settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                        } else {
+                            finishBulkTick(rpcIdentity);
+                        }
+                        return;
+                    }
+                    inspectBulkTaskAfterOptions(definition, progress, response.data || {}, rpcIdentity);
+                }, true);
+                return;
+            }
+
+            aria2TaskService.getTaskStatus(progress.current.gid, function (response) {
+                processBulkTaskResponse(definition, progress, response, rpcIdentity);
+            }, true);
         };
 
         var tick = function () {
@@ -907,18 +1750,80 @@
             }
 
             synchronizeRpcIdentity();
+            var rpcIdentity = getCurrentRpcIdentity();
+            var operation = createOperationContext(rpcIdentity);
+            var bulkDefinition = findBulkDefinition(rpcIdentity);
+            var bulkProgress = findBulkProgress(rpcIdentity);
             var currentJobs = getCurrentJobs();
-            if (currentJobs.length < 1) {
+            if (bulkDefinition && bulkProgress && bulkProgress.current) {
+                tickInProgress = true;
+                activeOperation = operation;
+                processBulkTick(bulkDefinition, bulkProgress, operation);
                 return;
             }
+            if (currentJobs.length > 0 && (!bulkDefinition || !bulkProgress || automaticJobTurn)) {
+                tickInProgress = true;
+                activeOperation = operation;
+                if (bulkDefinition && bulkProgress) {
+                    automaticJobTurn = false;
+                }
+                var job = currentJobs[pollCursor % currentJobs.length];
+                pollCursor++;
+                aria2TaskService.getTaskStatus(job.childGid || job.rootGid, function (response) {
+                    processTaskResponse(job, response, operation);
+                }, true);
+                return;
+            }
+            if (bulkDefinition && bulkProgress) {
+                tickInProgress = true;
+                activeOperation = operation;
+                processBulkTick(bulkDefinition, bulkProgress, operation);
+            }
+        };
 
-            tickInProgress = true;
-            var job = currentJobs[pollCursor % currentJobs.length];
-            pollCursor++;
+        var enqueueBulk = function (gids, thresholdBytes) {
             var rpcIdentity = getCurrentRpcIdentity();
-            aria2TaskService.getTaskStatus(job.childGid || job.rootGid, function (response) {
-                processTaskResponse(job, response, rpcIdentity);
-            }, true);
+            if (findBulkDefinition(rpcIdentity) || !Array.isArray(gids) ||
+                !isFinite(thresholdBytes) || thresholdBytes <= 0) {
+                return false;
+            }
+
+            var definition = sanitizeBulkDefinition({
+                rpcIdentity: rpcIdentity,
+                thresholdBytes: thresholdBytes,
+                gids: gids,
+                createdAt: Date.now()
+            });
+            if (!definition) {
+                return false;
+            }
+            var progress = {
+                rpcIdentity: rpcIdentity,
+                cursor: 0,
+                processed: 0,
+                filtered: 0,
+                skipped: 0,
+                failed: 0,
+                filteredFiles: 0,
+                current: null
+            };
+            bulkDefinitions.push(definition);
+            if (!saveBulkDefinitions()) {
+                bulkDefinitions.pop();
+                return false;
+            }
+            bulkProgresses.push(progress);
+            if (!saveBulkProgresses()) {
+                bulkProgresses.pop();
+                bulkDefinitions.pop();
+                saveBulkDefinitions();
+                return false;
+            }
+
+            automaticJobTurn = true;
+            bulkStatusRpcIdentity = rpcIdentity;
+            updateBulkRunningStatus();
+            return true;
         };
 
         var enqueue = function (rootGid, intent) {
@@ -973,6 +1878,7 @@
             }
 
             var currentJobs = getCurrentJobs();
+            lifecycleGeneration++;
             activeRpcIdentity = getCurrentRpcIdentity();
             resetAggregate();
             if (currentJobs.length > 0) {
@@ -985,19 +1891,24 @@
                 showOutcomeSummary();
             }
             restoredQueue = false;
+            bulkStatusRpcIdentity = activeRpcIdentity;
+            updateBulkRunningStatus();
             pollingPromise = $interval(tick, pollingInterval);
             return pollingPromise;
         };
 
         var stop = function () {
+            lifecycleGeneration++;
             if (pollingPromise) {
                 $interval.cancel(pollingPromise);
                 pollingPromise = null;
             }
 
             tickInProgress = false;
+            activeOperation = null;
             pollCursor = 0;
             setIdleStatus();
+            setBulkIdleStatus();
         };
 
         var buildPendingGidStageMap = function () {
@@ -1020,6 +1931,10 @@
         return {
             isBtMetadataUrl: isBtMetadataUrl,
             planFiles: planFiles,
+            isActiveBtPayloadTask: isActiveBtPayloadTask,
+            planExistingTaskFiles: planExistingTaskFiles,
+            getBulkPreview: getBulkPreview,
+            enqueueBulk: enqueueBulk,
             enqueue: enqueue,
             getJobs: function () {
                 return sanitizeQueue(jobs);
@@ -1029,6 +1944,21 @@
             },
             getStatus: function () {
                 return status;
+            },
+            getBulkStatus: function () {
+                if (bulkStatusRpcIdentity !== getCurrentRpcIdentity()) {
+                    bulkStatusRpcIdentity = getCurrentRpcIdentity();
+                    setBulkIdleStatus();
+                    updateBulkRunningStatus();
+                }
+                return bulkStatus;
+            },
+            acknowledgeBulkCompletion: function (completionId) {
+                if (bulkStatus.type === 'complete' &&
+                    bulkStatusRpcIdentity === getCurrentRpcIdentity() &&
+                    completionId === bulkStatus.completionId) {
+                    setBulkIdleStatus();
+                }
             },
             start: start,
             stop: stop

@@ -439,6 +439,34 @@
 }
 
 /* task-table */
+.theme-dark.skin-aria-ng .bulk-bt-filter-rail {
+    color: #eee;
+    background-color: #1d2226;
+    border-color: #3b4650;
+    border-left-color: #42a5f5;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .2);
+}
+
+.theme-dark.skin-aria-ng .bulk-bt-filter-state {
+    color: #a8b0b6;
+}
+
+.theme-dark.skin-aria-ng .bulk-bt-filter-summary > .fa {
+    color: #42a5f5;
+}
+
+.theme-dark.skin-aria-ng .bulk-bt-filter-error {
+    color: #ff8a80;
+}
+
+.theme-dark.skin-aria-ng .bulk-bt-filter-progress {
+    background-color: #313941;
+}
+
+.theme-dark.skin-aria-ng .bulk-bt-filter-progress > span {
+    background-color: #42a5f5;
+}
+
 .theme-dark.skin-aria-ng .task-table {
     background-color: #1a1a1a;
 }

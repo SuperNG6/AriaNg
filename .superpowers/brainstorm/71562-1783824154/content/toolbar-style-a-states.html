@@ -1,0 +1,43 @@
+<style>
+  .state-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}.state{border:1px solid #dfe5eb;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 5px 16px rgba(24,39,58,.06)}
+  .state h3{font-size:14px;padding:11px 14px;margin:0;background:#f8fafb;border-bottom:1px solid #e8edf1;color:#536271}.bar{height:72px;display:flex;align-items:center;gap:13px;padding:0 15px;background:#f7f7f7;color:#717171;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;white-space:nowrap}.help{width:18px;height:18px;border:2px solid #888;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700}.divider{height:28px;width:1px;background:#d4d4d4}
+  .control{display:flex;align-items:center;gap:8px;height:42px;padding:0 11px;border-left:3px solid #2196f3;border-radius:4px;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.10);font-size:14px}.check{width:18px;height:18px;border-radius:4px;background:#2196f3;color:#fff;display:grid;place-items:center;font-weight:800;font-size:12px}.input{width:58px;height:32px;border:1px solid #cfd7df;border-radius:5px;background:#fff;display:grid;place-items:center;color:#40464d;font-size:17px;font-weight:600;box-shadow:inset 0 1px 2px rgba(0,0,0,.04)}
+  .disabled .control{border-left-color:#b9c1c8;background:#f3f4f5;box-shadow:none;color:#a1a7ac}.disabled .check{background:#fff;border:1px solid #b9c1c8;color:transparent}.disabled .input{background:#e9ecef;color:#a2a8ad;border-color:#d5dade;box-shadow:none}
+  .error .control{border-left-color:#dd4b39}.error .input{border-color:#dd4b39;box-shadow:0 0 0 2px rgba(221,75,57,.12);color:#b33c2e}.error-note{font-size:11px;color:#c34737}
+  .dark .bar{background:#232a2f;color:#d3d8dc}.dark .state-inner{background:#232a2f}.dark .control{background:#30383e;border-left-color:#42a5f5;box-shadow:0 2px 7px rgba(0,0,0,.28)}.dark .input{background:#22292e;border-color:#56626b;color:#f2f5f7}.dark .help{border-color:#b4bdc4}
+  .mobile{grid-column:1/-1}.mobile .bar{height:90px;align-items:flex-start;padding-top:12px;flex-wrap:wrap;gap:10px}.mobile .control{flex-basis:100%;height:39px;margin-left:31px;width:max-content;flex-grow:0}.mobile .input{height:29px}.mobile .mobile-tools{display:flex;align-items:center;gap:12px}.tiny{font-size:18px;color:#aaa}.state-note{padding:10px 14px 12px;color:#74818d;font-size:12px;line-height:1.5}.confirm{margin-top:20px;padding:15px 17px;border-radius:10px;background:#eef7ff;border:1px solid #cfe7fb;color:#315c7b}
+  @media(max-width:780px){.state-grid{grid-template-columns:1fr}.mobile{grid-column:auto}.bar{overflow:auto}.control{font-size:13px}.state-grid .state:not(.mobile) .control{transform:scale(.9);transform-origin:left center}}
+</style>
+
+<h2>A 方案最终状态稿</h2>
+<p class="subtitle">细蓝色边缘负责强调启用状态，白色浮层与工具栏灰底形成分层；关闭和错误状态不依赖颜色 alone。</p>
+
+<div class="state-grid">
+  <div class="state">
+    <h3>启用 · 浅色</h3>
+    <div class="bar"><span class="tiny">▦</span><span class="divider"></span><span class="help">?</span><div class="control"><span class="check">✓</span><span>排除 BT 任务中小于</span><span class="input">100</span><span>MB 的文件</span></div></div>
+    <div class="state-note">蓝色强调边、轻阴影、紧凑圆角；输入框保留清晰边界。</div>
+  </div>
+  <div class="state disabled">
+    <h3>关闭</h3>
+    <div class="bar"><span class="tiny">▦</span><span class="divider"></span><span class="help">?</span><div class="control"><span class="check">✓</span><span>排除 BT 任务中小于</span><span class="input">100</span><span>MB 的文件</span></div></div>
+    <div class="state-note">移除阴影和蓝色强调，整体降级为中性灰，同时保留上次阈值。</div>
+  </div>
+  <div class="state error">
+    <h3>输入错误</h3>
+    <div class="bar"><span class="tiny">▦</span><span class="divider"></span><span class="help">?</span><div class="control"><span class="check">✓</span><span>排除 BT 任务中小于</span><span class="input">0</span><span>MB 的文件</span><span class="error-note">请输入 1–102400</span></div></div>
+    <div class="state-note">强调边与输入框同步变红，错误原因直接出现，不只靠红框表达。</div>
+  </div>
+  <div class="state dark">
+    <h3>启用 · 深色</h3>
+    <div class="bar"><span class="tiny">▦</span><span class="divider"></span><span class="help">?</span><div class="control"><span class="check">✓</span><span>排除 BT 任务中小于</span><span class="input">100</span><span>MB 的文件</span></div></div>
+    <div class="state-note">深色表面提升一级，阴影更克制，输入框使用更深的内层背景。</div>
+  </div>
+  <div class="state mobile">
+    <h3>窄屏 · 工具栏自然换行</h3>
+    <div class="bar"><div class="mobile-tools"><span class="tiny">＋</span><span class="tiny">▶</span><span class="tiny">Ⅱ</span><span class="help">?</span></div><div class="control"><span class="check">✓</span><span>排除 BT 任务中小于</span><span class="input">100</span><span>MB 的文件</span></div></div>
+    <div class="state-note">规则作为完整组件移到第二行，不截断句子，也不挤压主操作按钮。</div>
+  </div>
+</div>
+
+<div class="confirm"><strong>拟定实现：</strong>不改变 AriaNg 的工具栏骨架，只为该规则增加一层有边缘、有表面、有状态反馈的独立容器。</div>

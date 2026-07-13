@@ -69,7 +69,7 @@
         </div>
 
         <nav class="navbar navbar-static-top" role="navigation"
-             ng-class="{'bt-file-filter-active': isNewTaskPage() || btFileFilterStatus.visible}">
+             ng-class="{'bt-file-filter-active': isNewTaskPage() || btFileFilterStatus.visible || showBulkBtFileFilterGlobalStatus()}">
             <div class="navbar-toolbar">
                 <ul class="nav navbar-nav">
                     <li>
@@ -176,8 +176,8 @@
                         </a>
                     </li>
                     <li class="bt-file-filter-group"
-                        ng-if="isNewTaskPage() || btFileFilterStatus.visible"
-                        ng-class="{'has-filter-rule': isNewTaskPage(), 'has-filter-status': btFileFilterStatus.visible}">
+                        ng-if="isNewTaskPage() || btFileFilterStatus.visible || showBulkBtFileFilterGlobalStatus()"
+                        ng-class="{'has-filter-rule': isNewTaskPage(), 'has-filter-status': btFileFilterStatus.visible || showBulkBtFileFilterGlobalStatus()}">
                         <div class="bt-file-filter-toolbar" ng-if="isNewTaskPage()">
                             <div class="bt-file-filter-rule"
                                  ng-class="{'is-enabled': btFileFilterContext.enabled, 'has-error': btFileFilterContext.enabled && !isBtFileFilterValid()}">
@@ -209,6 +209,22 @@
                                   ng-bind="btFileFilterStatus.textKey | translate: btFileFilterStatus.textParams"></span>
                             <span class="bt-file-filter-status-compact"
                                   ng-bind="('format.bt-file-filter.compact.' + btFileFilterStatus.type) | translate: {count: btFileFilterStatus.type === 'warning' ? btFileFilterStatus.fallback : (btFileFilterStatus.type === 'complete' ? (btFileFilterStatus.filtered + btFileFilterStatus.full) : ({processing: btFileFilterStatus.total, waiting: btFileFilterStatus.textParams.count, resuming: btFileFilterStatus.textParams.count})[btFileFilterStatus.type])}"></span>
+                        </div>
+                        <div class="bt-file-filter-status bulk-bt-file-filter-global-status"
+                             ng-if="showBulkBtFileFilterGlobalStatus()"
+                             ng-class="'status-' + bulkBtFileFilterStatus.type"
+                             title="{{(bulkBtFileFilterStatus.type === 'running' ? 'format.bt-file-filter.bulk.running' : 'format.bt-file-filter.bulk.complete') | translate: bulkBtFileFilterStatus}}"
+                             role="status" aria-live="polite" aria-atomic="true">
+                            <i class="fa" aria-hidden="true"
+                               ng-class="{'fa-circle-o-notch fa-spin': bulkBtFileFilterStatus.type === 'running', 'fa-check-circle': bulkBtFileFilterStatus.type === 'complete'}"></i>
+                            <span class="bt-file-filter-status-full" aria-hidden="true" ng-if="bulkBtFileFilterStatus.type === 'running'"
+                                  ng-bind="'format.bt-file-filter.bulk.running' | translate: {processed: bulkBtFileFilterStatus.processed, total: bulkBtFileFilterStatus.total}"></span>
+                            <span class="bt-file-filter-status-full" aria-hidden="true" ng-if="bulkBtFileFilterStatus.type === 'complete'"
+                                  ng-bind="'format.bt-file-filter.bulk.complete' | translate: {filtered: bulkBtFileFilterStatus.filtered, skipped: bulkBtFileFilterStatus.skipped, failed: bulkBtFileFilterStatus.failed}"></span>
+                            <span class="bt-file-filter-status-compact" aria-hidden="true"
+                                  ng-bind="bulkBtFileFilterStatus.type === 'running' ? (bulkBtFileFilterStatus.processed + '/' + bulkBtFileFilterStatus.total) : bulkBtFileFilterStatus.filtered"></span>
+                            <span class="bt-file-filter-status-accessible"
+                                  ng-bind="(bulkBtFileFilterStatus.type === 'running' ? 'format.bt-file-filter.bulk.running' : 'format.bt-file-filter.bulk.complete') | translate: {processed: bulkBtFileFilterStatus.processed, total: bulkBtFileFilterStatus.total, filtered: bulkBtFileFilterStatus.filtered, skipped: bulkBtFileFilterStatus.skipped, failed: bulkBtFileFilterStatus.failed}"></span>
                         </div>
                     </li>
                 </ul>

@@ -1,4 +1,43 @@
 <section class="content no-padding">
+    <div class="bulk-bt-filter-rail" ng-if="showBulkBtFilterAction()" role="region" aria-labelledby="bulk-bt-filter-title">
+        <div class="bulk-bt-filter-summary">
+            <i class="fa fa-filter" aria-hidden="true"></i>
+            <div class="bulk-bt-filter-copy">
+                <div id="bulk-bt-filter-title" class="bulk-bt-filter-title" translate>format.bt-file-filter.bulk.scope</div>
+                <div class="bulk-bt-filter-state" role="status" aria-live="polite" aria-atomic="true">
+                    <span ng-if="bulkBtFilterPreview.analyzing && bulkBtFilterStatus.type !== 'running'" translate>format.bt-file-filter.bulk.analyzing</span>
+                    <span ng-if="!bulkBtFilterPreview.analyzing && bulkBtFilterStatus.type === 'idle' && bulkBtFilterPreview.taskCount < 1" translate>format.bt-file-filter.bulk.empty</span>
+                    <span ng-if="!bulkBtFilterPreview.analyzing && bulkBtFilterStatus.type === 'idle' && bulkBtFilterPreview.taskCount > 0"
+                          ng-bind="'format.bt-file-filter.bulk.ready' | translate: {count: bulkBtFilterPreview.taskCount, files: bulkBtFilterPreview.fileCount}"></span>
+                    <span ng-if="bulkBtFilterStatus.type === 'running'"
+                          ng-bind="'format.bt-file-filter.bulk.running' | translate: {processed: bulkBtFilterStatus.processed, total: bulkBtFilterStatus.total}"></span>
+                    <span ng-if="!bulkBtFilterPreview.analyzing && bulkBtFilterStatus.type === 'complete'"
+                          ng-bind="'format.bt-file-filter.bulk.complete' | translate: {filtered: bulkBtFilterStatus.filtered, skipped: bulkBtFilterStatus.skipped, failed: bulkBtFilterStatus.failed}"></span>
+                </div>
+            </div>
+        </div>
+        <div class="bulk-bt-filter-controls" role="toolbar" aria-labelledby="bulk-bt-filter-title">
+            <label for="bulk-bt-filter-threshold" translate>Exclude BT task files smaller than</label>
+            <input id="bulk-bt-filter-threshold" type="number" min="1" max="102400" step="1"
+                   class="form-control input-sm" ng-model="bulkBtFilterContext.minSizeMb"
+                   ng-change="changeBulkBtFileFilterThreshold()"
+                   aria-label="{{'BT file filter threshold' | translate}}"
+                   aria-invalid="{{!isBulkBtFileFilterValid()}}" />
+            <span class="bulk-bt-filter-unit">MB</span>
+            <button type="button" class="btn btn-primary btn-sm" ng-click="startBulkBtFileFilter()"
+                    ng-disabled="!isBulkBtFileFilterValid() || bulkBtFilterPreview.analyzing || bulkBtFilterPreview.taskCount < 1 || bulkBtFilterStatus.type !== 'idle'">
+                <i class="fa" ng-class="{'fa-filter': bulkBtFilterStatus.type !== 'running', 'fa-circle-o-notch fa-spin': bulkBtFilterStatus.type === 'running'}" aria-hidden="true"></i>
+                <span ng-bind="'format.bt-file-filter.bulk.action' | translate: {count: bulkBtFilterPreview.taskCount}"></span>
+            </button>
+        </div>
+        <div class="bulk-bt-filter-error" ng-if="!isBulkBtFileFilterValid()" role="alert" translate>BT file filter size error</div>
+        <div class="bulk-bt-filter-progress" ng-if="bulkBtFilterStatus.type === 'running'" role="progressbar"
+             aria-label="{{'format.bt-file-filter.bulk.scope' | translate}}"
+             aria-valuemin="0" aria-valuemax="{{bulkBtFilterStatus.total}}" aria-valuenow="{{bulkBtFilterStatus.processed}}"
+             aria-valuetext="{{'format.bt-file-filter.bulk.running' | translate: bulkBtFilterStatus}}">
+            <span ng-style="{width: (bulkBtFilterStatus.total ? bulkBtFilterStatus.processed * 100 / bulkBtFilterStatus.total : 0) + '%'}"></span>
+        </div>
+    </div>
     <div id="task-table" class="task-table">
         <div class="task-table-title">
             <div class="row">

@@ -176,6 +176,18 @@ td {
     display: none;
 }
 
+.main-header .bt-file-filter-status-accessible {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 .main-header .bt-file-filter-toggle > input:focus,
 .main-header .bt-file-filter-size:focus {
     outline: 2px solid rgba(0, 128, 255, .35);

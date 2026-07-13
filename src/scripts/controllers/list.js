@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    angular.module('ariaNg').controller('DownloadListController', ['$rootScope', '$scope', '$window', '$location', '$route', '$interval', 'dragulaService', 'aria2RpcErrors', 'ariaNgCommonService', 'ariaNgSettingService', 'ariaNgBtFileFilterService', 'aria2TaskService', function ($rootScope, $scope, $window, $location, $route, $interval, dragulaService, aria2RpcErrors, ariaNgCommonService, ariaNgSettingService, ariaNgBtFileFilterService, aria2TaskService) {
+    angular.module('ariaNg').controller('DownloadListController', ['$rootScope', '$scope', '$window', '$location', '$route', '$interval', '$timeout', 'dragulaService', 'aria2RpcErrors', 'ariaNgCommonService', 'ariaNgSettingService', 'ariaNgBtFileFilterService', 'aria2TaskService', function ($rootScope, $scope, $window, $location, $route, $interval, $timeout, dragulaService, aria2RpcErrors, ariaNgCommonService, ariaNgSettingService, ariaNgBtFileFilterService, aria2TaskService) {
         var location = $location.path().substring(1);
         var downloadTaskRefreshPromise = null;
         var pauseDownloadTaskRefresh = false;
@@ -13,9 +13,87 @@
         var lastTaskFileListRequestTime = null;
         var pendingWholeInfoRequestId = null;
         var pendingWholeInfoRequestTime = null;
+        var pendingWholeInfoCompletionId = null;
         var pendingWholeInfoTimeout = 30000;
+        var bulkPreviewTimeoutPromise = null;
+        var bulkCompletionRefreshTimeoutPromise = null;
+        var megabyte = 1024 * 1024;
 
         var collapsedFileDirs = {};
+
+        $scope.bulkBtFilterContext = $scope.btFileFilterContext || {
+            minSizeMb: ariaNgSettingService.getBtFileFilterMinSizeMb()
+        };
+        $scope.bulkBtFilterPreview = {gids: [], taskCount: 0, fileCount: 0, analyzing: true};
+        $scope.bulkBtFilterStatus = ariaNgBtFileFilterService.getBulkStatus();
+
+        $scope.showBulkBtFilterAction = function () {
+            return location === 'downloading' && $scope.showTaskListFileList();
+        };
+
+        $scope.isBulkBtFileFilterValid = function () {
+            var value = Number($scope.bulkBtFilterContext.minSizeMb);
+            return isFinite(value) && value >= 1 && value <= 102400 && value === Math.floor(value);
+        };
+
+        var updateBulkBtFilterPreview = function (tasks, completionId) {
+            if (bulkPreviewTimeoutPromise) {
+                $timeout.cancel(bulkPreviewTimeoutPromise);
+                bulkPreviewTimeoutPromise = null;
+            }
+            if (!$scope.showBulkBtFilterAction() || !$scope.isBulkBtFileFilterValid()) {
+                $scope.bulkBtFilterPreview = {gids: [], taskCount: 0, fileCount: 0, analyzing: false};
+                return;
+            }
+
+            var preview = ariaNgBtFileFilterService.getBulkPreview(tasks || [],
+                Number($scope.bulkBtFilterContext.minSizeMb) * megabyte);
+            preview.analyzing = false;
+            $scope.bulkBtFilterPreview = preview;
+            if (completionId !== null) {
+                ariaNgBtFileFilterService.acknowledgeBulkCompletion(completionId);
+            }
+        };
+
+        $scope.changeBulkBtFileFilterThreshold = function () {
+            if (bulkPreviewTimeoutPromise) {
+                $timeout.cancel(bulkPreviewTimeoutPromise);
+                bulkPreviewTimeoutPromise = null;
+            }
+            if (!$scope.isBulkBtFileFilterValid()) {
+                $scope.bulkBtFilterPreview = {gids: [], taskCount: 0, fileCount: 0, analyzing: false};
+                return;
+            }
+            ariaNgSettingService.setBtFileFilterMinSizeMb($scope.bulkBtFilterContext.minSizeMb);
+            $scope.bulkBtFilterPreview.analyzing = true;
+            if ($scope.bulkBtFilterStatus.type === 'complete') {
+                scheduleBulkCompletionRefresh();
+            }
+            bulkPreviewTimeoutPromise = $timeout(function () {
+                bulkPreviewTimeoutPromise = null;
+                updateBulkBtFilterPreview($rootScope.taskContext.list, null);
+            }, 200);
+        };
+
+        $scope.startBulkBtFileFilter = function () {
+            if (!$scope.isBulkBtFileFilterValid() || $scope.bulkBtFilterStatus.type !== 'idle' ||
+                $scope.bulkBtFilterPreview.analyzing || $scope.bulkBtFilterPreview.taskCount < 1) {
+                return;
+            }
+
+            var thresholdBytes = Number($scope.bulkBtFilterContext.minSizeMb) * megabyte;
+            var gids = $scope.bulkBtFilterPreview.gids.slice();
+            ariaNgCommonService.confirm('format.bt-file-filter.bulk.confirm-title',
+                'format.bt-file-filter.bulk.confirm-text', 'warning', function () {
+                    if (!ariaNgBtFileFilterService.enqueueBulk(gids, thresholdBytes)) {
+                        ariaNgCommonService.showError('format.bt-file-filter.bulk.enqueue-failed');
+                    }
+                }, false, {textParams: {
+                    count: gids.length,
+                    files: $scope.bulkBtFilterPreview.fileCount,
+                    threshold: $scope.bulkBtFilterContext.minSizeMb
+                }});
+        };
 
         var getCollapsedFileDirs = function (task) {
             if (!task || !task.gid) {
@@ -41,6 +119,38 @@
                     delete collapsedFileDirs[gid];
                 }
             }
+        };
+
+        var cancelBulkCompletionRefresh = function () {
+            if (bulkCompletionRefreshTimeoutPromise) {
+                $timeout.cancel(bulkCompletionRefreshTimeoutPromise);
+                bulkCompletionRefreshTimeoutPromise = null;
+            }
+        };
+
+        var scheduleBulkCompletionRefresh = function (delay) {
+            needRequestWholeInfo = true;
+            if (bulkCompletionRefreshTimeoutPromise) {
+                return;
+            }
+            bulkCompletionRefreshTimeoutPromise = $timeout(function () {
+                bulkCompletionRefreshTimeoutPromise = null;
+                if ($scope.bulkBtFilterStatus.type !== 'complete') {
+                    return;
+                }
+                if (pendingWholeInfoRequestId !== null && pendingWholeInfoRequestTime !== null) {
+                    var pendingElapsed = $window.Date.now() - pendingWholeInfoRequestTime;
+                    if (pendingElapsed >= 0 && pendingElapsed < pendingWholeInfoTimeout) {
+                        scheduleBulkCompletionRefresh(pendingWholeInfoTimeout - pendingElapsed);
+                        return;
+                    }
+                }
+                $rootScope.loadPromise = refreshDownloadTask(false);
+                if (pendingWholeInfoRequestId !== null &&
+                    pendingWholeInfoCompletionId === $scope.bulkBtFilterStatus.completionId) {
+                    scheduleBulkCompletionRefresh(pendingWholeInfoTimeout);
+                }
+            }, typeof delay === 'number' ? delay : 0);
         };
 
         var decorateBtFilterStage = function (tasks) {
@@ -118,9 +228,13 @@
 
                 pendingWholeInfoRequestId = null;
                 pendingWholeInfoRequestTime = null;
+                pendingWholeInfoCompletionId = null;
             }
 
             var requestId = ++downloadTaskRequestId;
+            var requestBulkCompletionId = requestWholeInfo &&
+                $scope.bulkBtFilterStatus.type === 'complete' ?
+                $scope.bulkBtFilterStatus.completionId : null;
 
             if (requestWholeInfo && showFileList && location === 'downloading') {
                 lastTaskFileListRequestTime = currentTime;
@@ -128,12 +242,14 @@
             if (requestWholeInfo) {
                 pendingWholeInfoRequestId = requestId;
                 pendingWholeInfoRequestTime = currentTime;
+                pendingWholeInfoCompletionId = requestBulkCompletionId;
             }
 
             return aria2TaskService.getTaskList(location, requestWholeInfo, function (response) {
                 if (pendingWholeInfoRequestId === requestId) {
                     pendingWholeInfoRequestId = null;
                     pendingWholeInfoRequestTime = null;
+                    pendingWholeInfoCompletionId = null;
                 }
 
                 if (pauseDownloadTaskRefresh || modeGeneration !== downloadTaskModeGeneration || requestId <= latestAppliedDownloadTaskRequestId) {
@@ -143,6 +259,10 @@
                 if (!response.success) {
                     if (response.data.message === aria2RpcErrors.Unauthorized.message) {
                         $interval.cancel(downloadTaskRefreshPromise);
+                        cancelBulkCompletionRefresh();
+                    } else if ($scope.bulkBtFilterStatus.type === 'complete') {
+                        cancelBulkCompletionRefresh();
+                        scheduleBulkCompletionRefresh(5000);
                     }
 
                     return;
@@ -157,6 +277,8 @@
                 if (isRequestWholeInfo) {
                     $rootScope.taskContext.list = taskList;
                     needRequestWholeInfo = false;
+
+                    updateBulkBtFilterPreview(taskList, requestBulkCompletionId);
 
                     if ($rootScope.taskContext.list && $rootScope.taskContext.list.length > 0) {
                         removeVirtualFileNodes($rootScope.taskContext.list);
@@ -213,6 +335,12 @@
                 decorateBtFilterStage($rootScope.taskContext.list);
                 cleanupCollapsedFileDirs($rootScope.taskContext.list);
                 $rootScope.taskContext.enableSelectAll = $rootScope.taskContext.list && $rootScope.taskContext.list.length > 0;
+
+                if (isRequestWholeInfo &&
+                    requestBulkCompletionId !== $scope.bulkBtFilterStatus.completionId &&
+                    $scope.bulkBtFilterStatus.type === 'complete') {
+                    scheduleBulkCompletionRefresh();
+                }
             }, silent);
         };
 
@@ -313,8 +441,29 @@
             needRequestWholeInfo = !!enabled;
             pendingWholeInfoRequestId = null;
             pendingWholeInfoRequestTime = null;
+            pendingWholeInfoCompletionId = null;
+            $scope.bulkBtFilterPreview.analyzing = !!enabled && location === 'downloading';
             $rootScope.loadPromise = refreshDownloadTask(false);
         });
+
+        var stopWatchingBulkCompletion = $scope.$watch('bulkBtFilterStatus.type', function (newValue, oldValue) {
+            if (location === 'downloading' && newValue === 'complete' && oldValue !== 'complete') {
+                cancelBulkCompletionRefresh();
+                if (pendingWholeInfoRequestId !== null &&
+                    pendingWholeInfoCompletionId !== $scope.bulkBtFilterStatus.completionId) {
+                    pendingWholeInfoRequestId = null;
+                    pendingWholeInfoRequestTime = null;
+                    pendingWholeInfoCompletionId = null;
+                }
+                scheduleBulkCompletionRefresh();
+            } else if (newValue !== 'complete') {
+                cancelBulkCompletionRefresh();
+            }
+        });
+
+        if (location === 'downloading' && $scope.bulkBtFilterStatus.type === 'complete') {
+            scheduleBulkCompletionRefresh();
+        }
 
         $scope.$on('$destroy', function () {
             pauseDownloadTaskRefresh = true;
@@ -322,6 +471,11 @@
             if (downloadTaskRefreshPromise) {
                 $interval.cancel(downloadTaskRefreshPromise);
             }
+            if (bulkPreviewTimeoutPromise) {
+                $timeout.cancel(bulkPreviewTimeoutPromise);
+            }
+            cancelBulkCompletionRefresh();
+            stopWatchingBulkCompletion();
         });
 
         $rootScope.keydownActions.selectAll = function (event) {

@@ -1,0 +1,151 @@
+<style>
+    .toolbar-demo {
+        overflow: hidden;
+        border: 1px solid #d8dde3;
+        border-radius: 5px;
+        background: #f8f8f8;
+        box-shadow: 0 2px 8px rgba(31, 45, 61, .08);
+        font-family: "Helvetica Neue", Arial, sans-serif;
+    }
+    .toolbar-row {
+        display: flex;
+        align-items: center;
+        height: 66px;
+        padding: 0 18px;
+        color: #969696;
+        white-space: nowrap;
+    }
+    .brand {
+        margin-right: 34px;
+        color: #34414b;
+        font-size: 25px;
+    }
+    .tool {
+        display: inline-flex;
+        align-items: center;
+        height: 34px;
+        padding: 0 12px;
+        border-right: 1px solid #d5d5d5;
+        font-size: 22px;
+    }
+    .new-tool { color: #168cf0; font-size: 18px; font-weight: 600; }
+    .help-tool { border-right: 0; color: #777; }
+    .filter-control {
+        display: inline-flex;
+        align-items: center;
+        height: 36px;
+        margin-left: 9px;
+        color: #4d5963;
+        font-size: 14px;
+    }
+    .filter-control input[type="checkbox"] { margin: 0 7px 0 0; accent-color: #168cf0; }
+    .number-box {
+        width: 58px;
+        height: 30px;
+        margin: 0 6px;
+        border: 1px solid #bfc7cf;
+        border-radius: 3px;
+        background: #fff;
+        color: #28323b;
+        text-align: center;
+        font-size: 14px;
+    }
+    .filter-button {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        height: 34px;
+        margin-left: 9px;
+        padding: 0 12px;
+        border: 1px solid #bfc7cf;
+        border-radius: 4px;
+        background: #fff;
+        color: #168cf0;
+        font-weight: 600;
+    }
+    .filter-pill {
+        display: inline-flex;
+        align-items: center;
+        height: 32px;
+        margin-left: 9px;
+        border: 1px solid #168cf0;
+        border-radius: 16px;
+        background: #eaf5ff;
+        color: #168cf0;
+        font-size: 14px;
+        font-weight: 600;
+    }
+    .pill-icon { padding: 0 8px 0 11px; }
+    .pill-value { padding: 0 11px 0 8px; border-left: 1px solid #9bcdf8; }
+    .status-note {
+        padding: 11px 18px;
+        border-top: 1px solid #e1e5e9;
+        background: #fff;
+        color: #66717c;
+        font-size: 12px;
+    }
+    .recommended {
+        display: inline-block;
+        margin-left: 7px;
+        padding: 2px 7px;
+        border-radius: 10px;
+        background: #e8f7ef;
+        color: #14844b;
+        font-size: 11px;
+        font-weight: 700;
+    }
+    .cards { grid-template-columns: 1fr; }
+</style>
+
+<h2>“过滤小文件”放在工具栏里，哪种方式最顺手？</h2>
+<p class="subtitle">三个方案都只在“新建任务”页面显示，并记住启用状态和 MB 阈值。点击一个方案即可选择。</p>
+
+<div class="cards">
+    <div class="card" data-choice="a" onclick="toggleSelect(this)">
+        <div class="card-image">
+            <div class="toolbar-demo">
+                <div class="toolbar-row">
+                    <span class="brand">AriaNg</span><span class="tool new-tool">＋ 新建</span><span class="tool">▶</span><span class="tool">Ⅱ</span><span class="tool">▦</span><span class="tool">A↕</span><span class="tool help-tool">?</span>
+                    <label class="filter-control"><input type="checkbox" checked>过滤小于 <input class="number-box" value="100" readonly> MB</label>
+                </div>
+                <div class="status-note">启用状态和数值始终可见，批量粘贴前能一眼确认。</div>
+            </div>
+        </div>
+        <div class="card-body">
+            <h3>A · 直接输入<span class="recommended">推荐</span></h3>
+            <p>勾选开关与阈值放在同一行。最明确、操作次数最少，也最不容易忘记当前规则。</p>
+        </div>
+    </div>
+
+    <div class="card" data-choice="b" onclick="toggleSelect(this)">
+        <div class="card-image">
+            <div class="toolbar-demo">
+                <div class="toolbar-row">
+                    <span class="brand">AriaNg</span><span class="tool new-tool">＋ 新建</span><span class="tool">▶</span><span class="tool">Ⅱ</span><span class="tool">▦</span><span class="tool">A↕</span><span class="tool help-tool">?</span>
+                    <span class="filter-button">☷ 过滤小文件 ▾</span>
+                </div>
+                <div class="status-note">点击按钮后，在浮层中启用过滤并填写 100 MB。</div>
+            </div>
+        </div>
+        <div class="card-body">
+            <h3>B · 按钮与弹出层</h3>
+            <p>工具栏更整洁，但阈值被藏起来；每次批量添加前需要点击才能确认。</p>
+        </div>
+    </div>
+
+    <div class="card" data-choice="c" onclick="toggleSelect(this)">
+        <div class="card-image">
+            <div class="toolbar-demo">
+                <div class="toolbar-row">
+                    <span class="brand">AriaNg</span><span class="tool new-tool">＋ 新建</span><span class="tool">▶</span><span class="tool">Ⅱ</span><span class="tool">▦</span><span class="tool">A↕</span><span class="tool help-tool">?</span>
+                    <span class="filter-pill"><span class="pill-icon">● 过滤</span><span class="pill-value">≥ 100 MB</span></span>
+                </div>
+                <div class="status-note">点击胶囊切换启用状态，点击数值进入编辑。</div>
+            </div>
+        </div>
+        <div class="card-body">
+            <h3>C · 状态胶囊</h3>
+            <p>最紧凑，当前阈值也可见；但“点击不同区域执行不同动作”需要学习。</p>
+        </div>
+    </div>
+</div>

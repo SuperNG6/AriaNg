@@ -235,6 +235,8 @@ const loadFilterService = function (options) {
     options = options || {};
     let factoryDefinition;
     let savedQueue = options.savedQueue;
+    let savedBulkRuns = options.savedBulkRuns;
+    let savedBulkProgresses = options.savedBulkProgresses;
     let rpcIdentity = options.rpcIdentity || 'http|localhost|6800|jsonrpc';
     const tasks = options.tasks || {};
     const taskOptions = options.taskOptions || {};
@@ -245,6 +247,7 @@ const loadFilterService = function (options) {
     const pausedGids = [];
     const notifications = [];
     const statusGids = [];
+    const storageSets = [];
     const pendingStatusCallbacks = [];
     const pendingOptionCallbacks = [];
     const pendingChangeCallbacks = [];
@@ -277,11 +280,15 @@ const loadFilterService = function (options) {
     });
 
     const dependencies = {
-        '$interval': function (callback, delay) {
+        '$interval': Object.assign(function (callback, delay) {
             const handle = {callback: callback, delay: delay};
             intervals.push(handle);
             return handle;
-        },
+        }, {
+            cancel: function (handle) {
+                handle.cancelled = true;
+            }
+        }),
         '$timeout': function (callback, delay) {
             const handle = {callback: callback, delay: delay};
             timeouts.push(handle);
@@ -289,10 +296,30 @@ const loadFilterService = function (options) {
         },
         'ariaNgConstants': constants.ariaNgConstants,
         'ariaNgStorageService': {
-            get: function () { return savedQueue; },
+            get: function (key) {
+                if (key === constants.ariaNgConstants.btFileFilterBulkQueueStorageKey) {
+                    return savedBulkRuns;
+                }
+                if (key === constants.ariaNgConstants.btFileFilterBulkProgressStorageKey) {
+                    return savedBulkProgresses;
+                }
+                return savedQueue;
+            },
             set: function (key, value) {
-                assert.strictEqual(key, constants.ariaNgConstants.btFileFilterQueueStorageKey);
-                savedQueue = value;
+                storageSets.push({key: key, size: JSON.stringify(value).length});
+                const setResult = typeof options.storageSetResult === 'function' ?
+                    options.storageSetResult(key, value, storageSets.length) : options.storageSetResult;
+                if (setResult === false) {
+                    return false;
+                }
+                if (key === constants.ariaNgConstants.btFileFilterBulkQueueStorageKey) {
+                    savedBulkRuns = value;
+                } else if (key === constants.ariaNgConstants.btFileFilterBulkProgressStorageKey) {
+                    savedBulkProgresses = value;
+                } else {
+                    assert.strictEqual(key, constants.ariaNgConstants.btFileFilterQueueStorageKey);
+                    savedQueue = value;
+                }
                 return true;
             }
         },
@@ -381,6 +408,13 @@ const loadFilterService = function (options) {
                 startRpcIdentities.push(rpcIdentity);
                 startedGids.push.apply(startedGids, gids);
                 const response = startResponses.length > 0 ? startResponses.shift() : {success: true, data: 'OK'};
+                if ((response.success || response.hasSuccess) && options.applySuccessfulStart !== false) {
+                    gids.forEach(function (gid) {
+                        if (tasks[gid]) {
+                            tasks[gid].status = 'active';
+                        }
+                    });
+                }
                 if (options.deferStart) {
                     pendingStartCallbacks.push({callback: callback, response: response});
                 } else {
@@ -414,6 +448,7 @@ const loadFilterService = function (options) {
         pausedGids: pausedGids,
         notifications: notifications,
         statusGids: statusGids,
+        storageSets: storageSets,
         optionRpcIdentities: optionRpcIdentities,
         changeRpcIdentities: changeRpcIdentities,
         startRpcIdentities: startRpcIdentities,
@@ -442,14 +477,33 @@ const loadFilterService = function (options) {
             pending.callback(response || pending.response);
         },
         getSavedQueue: function () { return savedQueue || []; },
+        getSavedBulkRuns: function () { return savedBulkRuns || []; },
+        getSavedBulkProgresses: function () { return savedBulkProgresses || []; },
         tick: function () {
-            intervals.forEach(function (interval) { interval.callback(); });
+            intervals.forEach(function (interval) {
+                if (!interval.cancelled) {
+                    interval.callback();
+                }
+            });
+        },
+        tickMany: function (count) {
+            for (let i = 0; i < count; i++) {
+                intervals.forEach(function (interval) {
+                    if (!interval.cancelled) {
+                        interval.callback();
+                    }
+                });
+            }
         },
         tickUntilIdle: function () {
             for (let i = 0; i < 30 && service.getJobs().some(function (job) {
                 return job.rpcIdentity === rpcIdentity;
             }); i++) {
-                intervals.forEach(function (interval) { interval.callback(); });
+                intervals.forEach(function (interval) {
+                    if (!interval.cancelled) {
+                        interval.callback();
+                    }
+                });
             }
         }
     };
@@ -601,6 +655,7 @@ const loadMainController = function (options) {
     let globalStatCallback;
     let startCount = 0;
     const status = {visible: false};
+    const bulkStatus = {visible: false, type: 'idle'};
     const module = {
         controller: function (name, definition) {
             controllerDefinition = definition;
@@ -645,6 +700,7 @@ const loadMainController = function (options) {
         'ariaNgTitleService': {getFinalTitleByGlobalStat: function () { return 'title'; }},
         'ariaNgBtFileFilterService': {
             getStatus: function () { return status; },
+            getBulkStatus: function () { return bulkStatus; },
             start: function () { startCount++; }
         },
         'aria2TaskService': {},
@@ -1282,7 +1338,7 @@ test('recovers five paused magnet children when aria2 no longer retains metadata
     assert(context.waitingListRequests.every(function (request) {
         return request.type === 'waiting' && request.full === true && request.silent === true &&
             JSON.stringify(request.requestParams) ===
-                JSON.stringify(['gid', 'following']);
+                JSON.stringify(['gid', 'following', 'infoHash']);
     }));
     assert.deepStrictEqual(context.changedOptions.map(function (change) {
         return change.gid;
@@ -1291,6 +1347,209 @@ test('recovers five paused magnet children when aria2 no longer retains metadata
         ['child-1', 'child-2', 'child-3', 'child-4', 'child-5']);
     assert.strictEqual(context.getSavedQueue().length, 0);
     assert.strictEqual(context.service.getStatus().filtered, 5);
+});
+
+test('recovers an already-registered active BT task by its unique InfoHash', function () {
+    const activeTask = {
+        gid: 'existing', status: 'active',
+        infoHash: '0123456789ABCDEF0123456789ABCDEF01234567', bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]
+    };
+    const context = loadFilterService({
+        tasks: {
+            root: {
+                gid: 'root', status: 'error', errorCode: '12',
+                errorMessage: 'InfoHash 0123456789abcdef0123456789abcdef01234567 is already registered.',
+                infoHash: '0123456789abcdef0123456789abcdef01234567', bittorrent: {}, files: []
+            },
+            existing: activeTask
+        },
+        activeTasks: [activeTask],
+        taskOptions: {'bt-remove-unselected-file': 'false'}
+    });
+
+    context.service.enqueue('root', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+    context.service.start();
+    context.tickUntilIdle();
+
+    assert.deepStrictEqual(context.changedOptions, [{gid: 'existing', options: {
+        'select-file': '2', 'bt-remove-unselected-file': 'true'
+    }}]);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(context.service.getStatus().filtered, 1);
+    assert.strictEqual(context.getSavedQueue().length, 0);
+});
+
+test('InfoHash recovery never reselects files excluded from an existing BT task', function () {
+    const infoHash = '0123456789abcdef0123456789abcdef01234567';
+    const activeTask = {
+        gid: 'existing', status: 'active', infoHash: infoHash, bittorrent: {}, files: [
+            {index: '1', length: '50', selected: 'false'},
+            {index: '2', length: '200', selected: 'false'},
+            {index: '3', length: '600', selected: 'true'}
+        ]
+    };
+    const context = loadFilterService({
+        tasks: {
+            root: {
+                gid: 'root', status: 'error', errorCode: '12', infoHash: infoHash,
+                bittorrent: {}, files: []
+            },
+            existing: activeTask
+        },
+        activeTasks: [activeTask],
+        taskOptions: {'bt-remove-unselected-file': 'true'}
+    });
+
+    context.service.enqueue('root', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+    context.service.start();
+    context.tickUntilIdle();
+
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.deepStrictEqual(activeTask.files.map(function (file) { return file.selected; }),
+        ['false', 'false', 'true']);
+    assert.strictEqual(context.service.getStatus().full, 1);
+});
+
+test('InfoHash recovery leaves an all-small partial selection unchanged', function () {
+    const infoHash = '0123456789abcdef0123456789abcdef01234567';
+    const activeTask = {
+        gid: 'existing', status: 'active', infoHash: infoHash, bittorrent: {}, files: [
+            {index: '1', length: '10', selected: 'false'},
+            {index: '2', length: '20', selected: 'true'}
+        ]
+    };
+    const context = loadFilterService({
+        tasks: {
+            root: {gid: 'root', status: 'error', errorCode: '12', infoHash: infoHash,
+                bittorrent: {}, files: []},
+            existing: activeTask
+        },
+        activeTasks: [activeTask],
+        taskOptions: {'bt-remove-unselected-file': 'false'}
+    });
+
+    context.service.enqueue('root', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+    context.service.start();
+    context.tickUntilIdle();
+
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.deepStrictEqual(activeTask.files.map(function (file) { return file.selected; }), ['false', 'true']);
+});
+
+test('Download Later InfoHash recovery never pauses a pre-existing active task', function () {
+    const infoHash = '0123456789abcdef0123456789abcdef01234567';
+    const activeTask = {
+        gid: 'existing', status: 'active', infoHash: infoHash, bittorrent: {}, files: [
+            {index: '1', length: '20', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]
+    };
+    const context = loadFilterService({
+        tasks: {
+            root: {gid: 'root', status: 'error', errorCode: '12', infoHash: infoHash,
+                bittorrent: {}, files: []},
+            existing: activeTask
+        },
+        activeTasks: [activeTask],
+        taskOptions: {'bt-remove-unselected-file': 'false'}
+    });
+
+    context.service.enqueue('root', {
+        thresholdBytes: 100, startAfterFilter: false, sourceType: 'magnet'
+    });
+    context.service.start();
+    context.tickUntilIdle();
+
+    assert.deepStrictEqual(context.pausedGids, []);
+    assert.strictEqual(activeTask.status, 'active');
+    assert.deepStrictEqual(context.changedOptions, [{gid: 'existing', options: {
+        'select-file': '2', 'bt-remove-unselected-file': 'true'
+    }}]);
+});
+
+test('coalesces an InfoHash recovery already owned by another filter job', function () {
+    const infoHash = '0123456789abcdef0123456789abcdef01234567';
+    const baseJob = {
+        rpcIdentity: 'http|localhost|6800|jsonrpc', thresholdBytes: 100,
+        startAfterFilter: true, sourceType: 'magnet', retryCount: 0,
+        originalRemoveUnselectedFile: null
+    };
+    const activeTask = {
+        gid: 'existing', status: 'active', infoHash: infoHash, bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]
+    };
+    const context = loadFilterService({
+        savedQueue: [
+            Object.assign({}, baseJob, {
+                rootGid: 'duplicate-root', childGid: '', stage: 'waiting-metadata'
+            }),
+            Object.assign({}, baseJob, {
+                rootGid: 'original-root', childGid: 'existing', stage: 'waiting-files'
+            })
+        ],
+        tasks: {
+            'duplicate-root': {
+                gid: 'duplicate-root', status: 'error', errorCode: '12',
+                infoHash: infoHash, bittorrent: {}, files: []
+            },
+            existing: activeTask
+        },
+        activeTasks: [activeTask],
+        taskOptions: {'bt-remove-unselected-file': 'false'}
+    });
+
+    context.service.start();
+    context.tick();
+
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    assert.strictEqual(context.getSavedQueue()[0].rootGid, 'original-root');
+    assert.deepStrictEqual(context.changedOptions, []);
+
+    context.tickUntilIdle();
+    assert.strictEqual(context.changedOptions.length, 1);
+    assert.strictEqual(context.changedOptions[0].gid, 'existing');
+    assert.strictEqual(context.service.getStatus().filtered, 1);
+});
+
+test('does not choose an arbitrary already-registered task when InfoHash matches are ambiguous', function () {
+    const context = loadFilterService({
+        tasks: {
+            root: {
+                gid: 'root', status: 'error', errorCode: '12',
+                infoHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', bittorrent: {}, files: []
+            }
+        },
+        activeTasks: [
+            {gid: 'one', status: 'active', infoHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'},
+            {gid: 'two', status: 'active', infoHash: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'}
+        ]
+    });
+
+    context.service.enqueue('root', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+    context.service.start();
+    for (let i = 0; i < 6; i++) {
+        context.tick();
+    }
+
+    assert.strictEqual(context.getSavedQueue().length, 1);
+    assert.strictEqual(context.getSavedQueue()[0].childGid, '');
+    assert.strictEqual(context.getSavedQueue()[0].infoHash,
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.deepStrictEqual(context.startedGids, []);
 });
 
 test('keeps a recovered Download Later remote-torrent child paused after filtering', function () {
@@ -2460,6 +2719,786 @@ test('an unresolved missing root remains queued after another job completes', fu
     assert.strictEqual(context.service.getStatus().total, 2);
 });
 
+const createActiveBtPayload = function (gid, files) {
+    return {
+        gid: gid,
+        status: 'active',
+        infoHash: '0123456789abcdef0123456789abcdef01234567',
+        bittorrent: {mode: 'multi', info: {name: gid}},
+        files: files,
+        seeder: false
+    };
+};
+
+const createApplyingBulkStorage = function (gid) {
+    const rpcIdentity = 'http|localhost|6800|jsonrpc';
+    return {
+        savedBulkRuns: [{
+            rpcIdentity: rpcIdentity,
+            thresholdBytes: 100,
+            gids: [gid]
+        }],
+        savedBulkProgresses: [{
+            rpcIdentity: rpcIdentity,
+            cursor: 0,
+            processed: 0,
+            filtered: 0,
+            skipped: 0,
+            failed: 0,
+            filteredFiles: 0,
+            current: {
+                gid: gid,
+                stage: 'applying',
+                retryCount: 1,
+                restoreRetryCount: 0,
+                filteredFileCount: 1,
+                originalSelectedIndexes: [1, 2],
+                targetSelectedIndexes: [2],
+                originalRemoveUnselectedFile: 'false',
+                targetRemoveUnselectedFile: 'true'
+            }
+        }]
+    };
+};
+
+test('classifies only active BT payload downloads and preserves existing file choices', function () {
+    const context = loadFilterService();
+    const task = createActiveBtPayload('payload', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'},
+        {index: '3', length: '300', selected: 'false'}
+    ]);
+
+    assert.strictEqual(context.service.isActiveBtPayloadTask(task), true);
+    assert.strictEqual(context.service.isActiveBtPayloadTask(Object.assign({}, task, {seeder: 'false'})), true);
+    assert.strictEqual(context.service.isActiveBtPayloadTask(Object.assign({}, task, {
+        bittorrent: {mode: 'multi'},
+        files: [{index: '1', path: '[METADATA]payload', length: '0', selected: 'true'}]
+    })), false);
+    assert.strictEqual(context.service.isActiveBtPayloadTask(Object.assign({}, task, {status: 'waiting'})), false);
+    assert.strictEqual(context.service.isActiveBtPayloadTask(Object.assign({}, task, {seeder: true})), false);
+    assert.strictEqual(context.service.isActiveBtPayloadTask(Object.assign({}, task, {verifiedLength: '0'})), false);
+    assert.strictEqual(context.service.isActiveBtPayloadTask(Object.assign({}, task, {
+        verifyIntegrityPending: 'true'
+    })), false);
+
+    const plan = context.service.planExistingTaskFiles(task.files, 100);
+    assert.strictEqual(plan.mode, 'filter');
+    assert.deepStrictEqual(Array.from(plan.originalSelectedIndexes), [1, 2]);
+    assert.deepStrictEqual(Array.from(plan.targetSelectedIndexes), [2]);
+    assert.deepStrictEqual(Array.from(plan.allIndexes), [1, 2, 3]);
+    assert.strictEqual(plan.filteredFileCount, 1);
+});
+
+test('previews only payload tasks whose current selection can be narrowed', function () {
+    const context = loadFilterService();
+    const candidate = createActiveBtPayload('candidate', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const allSmall = createActiveBtPayload('all-small', [
+        {index: '1', length: '20', selected: 'true'}
+    ]);
+    const metadata = {
+        gid: 'metadata', status: 'active', infoHash: candidate.infoHash,
+        bittorrent: {mode: 'single'},
+        files: [{index: '1', path: '[METADATA]name', length: '0', selected: 'true'}]
+    };
+    const preview = context.service.getBulkPreview([candidate, allSmall, metadata], 100);
+
+    assert.deepStrictEqual(Array.from(preview.gids), ['candidate']);
+    assert.strictEqual(preview.taskCount, 1);
+    assert.strictEqual(preview.fileCount, 1);
+});
+
+test('does not bulk-preview a BT child still owned by automatic filtering', function () {
+    const context = loadFilterService();
+    const task = createActiveBtPayload('child', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    task.following = 'root';
+    context.service.enqueue('root', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+
+    const preview = context.service.getBulkPreview([task], 100);
+
+    assert.deepStrictEqual(Array.from(preview.gids), []);
+    assert.strictEqual(preview.taskCount, 0);
+    assert.strictEqual(preview.fileCount, 0);
+});
+
+test('does not bulk-preview an InfoHash-recovered child without a following link', function () {
+    const context = loadFilterService({savedQueue: [{
+        rpcIdentity: 'http|localhost|6800|jsonrpc',
+        rootGid: 'duplicate-root',
+        childGid: 'existing-child',
+        thresholdBytes: 100,
+        startAfterFilter: true,
+        sourceType: 'magnet',
+        stage: 'waiting-files',
+        retryCount: 0,
+        preserveExistingSelection: true
+    }]});
+    const task = createActiveBtPayload('existing-child', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+
+    const preview = context.service.getBulkPreview([task], 100);
+
+    assert.deepStrictEqual(Array.from(preview.gids), []);
+    assert.strictEqual(preview.taskCount, 0);
+    assert.strictEqual(preview.fileCount, 0);
+});
+
+test('previews one hundred thousand BT files in one linear file pass', function () {
+    const context = loadFilterService();
+    const tasks = [];
+    let filePropertyReads = 0;
+    for (let taskIndex = 0; taskIndex < 1000; taskIndex++) {
+        const files = [];
+        for (let fileIndex = 1; fileIndex <= 100; fileIndex++) {
+            const values = {
+                index: String(fileIndex),
+                length: fileIndex <= 50 ? '50' : '150',
+                selected: 'true'
+            };
+            const file = {};
+            ['index', 'length', 'selected'].forEach(function (key) {
+                Object.defineProperty(file, key, {
+                    enumerable: true,
+                    get: function () {
+                        filePropertyReads++;
+                        return values[key];
+                    }
+                });
+            });
+            files.push(file);
+        }
+        tasks.push(createActiveBtPayload('task-' + taskIndex, files));
+    }
+
+    const preview = context.service.getBulkPreview(tasks, 100);
+
+    assert.strictEqual(preview.taskCount, 1000);
+    assert.strictEqual(preview.fileCount, 50000);
+    assert.strictEqual(filePropertyReads, 300000);
+});
+
+test('processes a bulk run one task at a time without pausing active downloads', function () {
+    const tasks = {
+        one: createActiveBtPayload('one', [
+            {index: '1', length: '20', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]),
+        two: createActiveBtPayload('two', [
+            {index: '1', length: '30', selected: 'true'},
+            {index: '2', length: '300', selected: 'true'}
+        ])
+    };
+    const context = loadFilterService({tasks: tasks, taskOptions: {
+        one: {'bt-remove-unselected-file': 'false'},
+        two: {'bt-remove-unselected-file': 'false'}
+    }});
+
+    assert.strictEqual(context.service.enqueueBulk(['one', 'two'], 100), true);
+    context.service.start();
+    context.tickMany(20);
+
+    assert.deepStrictEqual(context.pausedGids, []);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.deepStrictEqual(context.changedOptions, [
+        {gid: 'one', options: {'select-file': '2', 'bt-remove-unselected-file': 'true'}},
+        {gid: 'two', options: {'select-file': '2', 'bt-remove-unselected-file': 'true'}}
+    ]);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.getSavedBulkRuns())), []);
+    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+    assert.strictEqual(context.service.getBulkStatus().filtered, 2);
+    assert.strictEqual(context.service.getBulkStatus().filteredFiles, 2);
+
+    context.timeouts[context.timeouts.length - 1].callback();
+    assert.strictEqual(context.service.getBulkStatus().visible, false);
+    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+});
+
+test('does not inspect the next bulk task while the current option change is unresolved', function () {
+    const tasks = {
+        one: createActiveBtPayload('one', [
+            {index: '1', length: '20', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]),
+        two: createActiveBtPayload('two', [
+            {index: '1', length: '20', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ])
+    };
+    const context = loadFilterService({tasks: tasks, deferChange: true});
+    context.service.enqueueBulk(['one', 'two'], 100);
+    context.service.start();
+    context.tick();
+    context.tickMany(5);
+
+    assert.deepStrictEqual(context.statusGids, ['one']);
+    assert.deepStrictEqual(context.changedOptions.map(function (item) { return item.gid; }), ['one']);
+
+    context.resolveChange();
+    context.tick();
+    assert.deepStrictEqual(context.statusGids, ['one', 'two']);
+});
+
+test('keeps the immutable bulk GID definition separate from the current checkpoint', function () {
+    const task = createActiveBtPayload('one', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({tasks: {one: task}, deferChange: true});
+    context.service.enqueueBulk(['one'], 100);
+    context.service.start();
+    context.tick();
+
+    const definition = JSON.parse(JSON.stringify(context.getSavedBulkRuns()[0]));
+    const progress = JSON.parse(JSON.stringify(context.getSavedBulkProgresses()[0]));
+    assert.deepStrictEqual(definition.gids, ['one']);
+    assert.strictEqual(definition.current, undefined);
+    assert.strictEqual(progress.current.gid, 'one');
+    assert.strictEqual(progress.current.stage, 'applying');
+    assert.deepStrictEqual(progress.current.originalSelectedIndexes, [1, 2]);
+    assert.deepStrictEqual(progress.current.targetSelectedIndexes, [2]);
+});
+
+test('enqueues one thousand bulk gids with two storage writes and one small checkpoint', function () {
+    const context = loadFilterService();
+    const gids = [];
+    for (let i = 0; i < 1000; i++) {
+        gids.push(('000000000000000' + i.toString(16)).slice(-16));
+    }
+    gids.push(gids[0]);
+    const writesBefore = context.storageSets.length;
+
+    assert.strictEqual(context.service.enqueueBulk(gids, 100), true);
+
+    const writes = context.storageSets.slice(writesBefore);
+    const definition = JSON.parse(JSON.stringify(context.getSavedBulkRuns()[0]));
+    const progress = JSON.parse(JSON.stringify(context.getSavedBulkProgresses()[0]));
+    assert.strictEqual(writes.length, 2);
+    assert.strictEqual(definition.gids.length, 1000);
+    assert.strictEqual(progress.current, null);
+    assert(writes[1].size < 300, 'bulk progress checkpoint grew with the GID queue');
+});
+
+test('reloads an applying bulk checkpoint and reconciles without a duplicate mutation', function () {
+    const task = createActiveBtPayload('one', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const taskOptions = {'bt-remove-unselected-file': 'false'};
+    const first = loadFilterService({
+        tasks: {one: task},
+        taskOptions: {one: taskOptions},
+        deferChange: true
+    });
+    first.service.enqueueBulk(['one'], 100);
+    first.service.start();
+    first.tick();
+
+    const restored = loadFilterService({
+        tasks: {one: task},
+        taskOptions: {one: taskOptions},
+        savedBulkRuns: JSON.parse(JSON.stringify(first.getSavedBulkRuns())),
+        savedBulkProgresses: JSON.parse(JSON.stringify(first.getSavedBulkProgresses()))
+    });
+    restored.service.start();
+    restored.tick();
+
+    assert.deepStrictEqual(restored.changedOptions, []);
+    assert.strictEqual(restored.service.getBulkStatus().type, 'complete');
+    assert.strictEqual(restored.service.getBulkStatus().filtered, 1);
+});
+
+test('does not reapply a restored bulk checkpoint to an ineligible task', function () {
+    const variants = [
+        {name: 'paused', apply: function (task) { task.status = 'paused'; }},
+        {name: 'waiting', apply: function (task) { task.status = 'waiting'; }},
+        {name: 'seeding', apply: function (task) { task.seeder = true; }},
+        {name: 'verifying', apply: function (task) { task.verifiedLength = '0'; }},
+        {name: 'pending verification', apply: function (task) {
+            task.verifyIntegrityPending = 'true';
+        }}
+    ];
+
+    variants.forEach(function (variant) {
+        const task = createActiveBtPayload('task', [
+            {index: '1', length: '20', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]);
+        variant.apply(task);
+        const context = loadFilterService(Object.assign({
+            tasks: {task: task},
+            taskOptions: {task: {'bt-remove-unselected-file': 'false'}}
+        }, createApplyingBulkStorage('task')));
+
+        context.service.start();
+        context.tick();
+
+        assert.deepStrictEqual(context.changedOptions, [], variant.name);
+        assert.strictEqual(context.service.getBulkStatus().type, 'complete', variant.name);
+        assert.strictEqual(context.service.getBulkStatus().skipped, 1, variant.name);
+    });
+});
+
+test('only restores a changed ineligible task from an applying checkpoint', function () {
+    const task = createActiveBtPayload('task', [
+        {index: '1', length: '20', selected: 'false'},
+        {index: '2', length: '200', selected: 'true'},
+        {index: '3', length: '300', selected: 'true'}
+    ]);
+    task.status = 'paused';
+    const context = loadFilterService(Object.assign({
+        tasks: {task: task},
+        taskOptions: {task: {'bt-remove-unselected-file': 'true'}}
+    }, createApplyingBulkStorage('task')));
+
+    context.service.start();
+    context.tick();
+
+    assert.deepStrictEqual(context.changedOptions, [{gid: 'task', options: {
+        'select-file': '1,2', 'bt-remove-unselected-file': 'false'
+    }}]);
+    assert.strictEqual(context.service.getBulkStatus().failed, 1);
+});
+
+test('does not enable cleanup for a task that was already partially selected', function () {
+    const task = createActiveBtPayload('partial', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'},
+        {index: '3', length: '300', selected: 'false'}
+    ]);
+    const context = loadFilterService({tasks: {partial: task}, taskOptions: {
+        partial: {'bt-remove-unselected-file': 'false'}
+    }});
+
+    context.service.enqueueBulk(['partial'], 100);
+    context.service.start();
+    context.tickMany(12);
+
+    assert.deepStrictEqual(context.changedOptions, [{gid: 'partial', options: {
+        'select-file': '2', 'bt-remove-unselected-file': 'false'
+    }}]);
+});
+
+test('skips a bulk candidate that is no longer active before processing it', function () {
+    const task = createActiveBtPayload('moved', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({tasks: {moved: task}});
+    context.service.enqueueBulk(['moved'], 100);
+    task.status = 'waiting';
+    context.service.start();
+    context.tickMany(6);
+
+    assert.deepStrictEqual(context.pausedGids, []);
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(context.service.getBulkStatus().skipped, 1);
+});
+
+test('skips a stale bulk snapshot after an automatic job adopts its following child', function () {
+    const child = createActiveBtPayload('child', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    child.following = 'root';
+    const context = loadFilterService({tasks: {
+        root: {gid: 'root', status: 'active', followedBy: ['child'], bittorrent: {}, files: []},
+        child: child
+    }});
+    const stalePreview = context.service.getBulkPreview([child], 100);
+
+    context.service.enqueue('root', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+    context.service.enqueueBulk(stalePreview.gids, 100);
+    context.service.start();
+    context.tick();
+    context.tick();
+
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+    assert.strictEqual(context.service.getBulkStatus().skipped, 1);
+});
+
+test('skips a stale bulk snapshot after InfoHash recovery adopts a child without following', function () {
+    const child = createActiveBtPayload('existing-child', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({
+        tasks: {
+            root: {
+                gid: 'root', status: 'error', errorCode: '12', infoHash: child.infoHash,
+                bittorrent: {}, files: []
+            },
+            'existing-child': child
+        },
+        activeTasks: [child]
+    });
+    const stalePreview = context.service.getBulkPreview([child], 100);
+
+    context.service.enqueue('root', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+    context.service.enqueueBulk(stalePreview.gids, 100);
+    context.service.start();
+    context.tick();
+    context.tick();
+
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+    assert.strictEqual(context.service.getBulkStatus().skipped, 1);
+});
+
+test('skips a bulk item adopted by automatic filtering during option inspection', function () {
+    const child = createActiveBtPayload('child', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    child.following = 'root';
+    const context = loadFilterService({tasks: {child: child}, deferOptions: true});
+    context.service.enqueueBulk(['child'], 100);
+    context.service.start();
+    context.tick();
+
+    context.service.enqueue('root', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+    context.resolveOptions();
+
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+    assert.strictEqual(context.service.getBulkStatus().skipped, 1);
+});
+
+test('uses the latest file selection after option inspection before bulk mutation', function () {
+    const serverTask = createActiveBtPayload('task', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'},
+        {index: '3', length: '300', selected: 'true'}
+    ]);
+    const context = loadFilterService({
+        deferOptions: true,
+        statusResponseForGid: function () {
+            return {success: true, data: JSON.parse(JSON.stringify(serverTask))};
+        }
+    });
+    context.service.enqueueBulk(['task'], 100);
+    context.service.start();
+    context.tick();
+    serverTask.files[2].selected = 'false';
+
+    context.resolveOptions();
+
+    assert.deepStrictEqual(context.changedOptions, [{gid: 'task', options: {
+        'select-file': '2', 'bt-remove-unselected-file': 'false'
+    }}]);
+});
+
+test('skips a bulk task paused while option inspection is in flight', function () {
+    const serverTask = createActiveBtPayload('task', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({
+        deferOptions: true,
+        statusResponseForGid: function () {
+            return {success: true, data: JSON.parse(JSON.stringify(serverTask))};
+        }
+    });
+    context.service.enqueueBulk(['task'], 100);
+    context.service.start();
+    context.tick();
+    serverTask.status = 'paused';
+
+    context.resolveOptions();
+
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.strictEqual(context.service.getBulkStatus().skipped, 1);
+});
+
+test('restores the exact original selection after three failed bulk changes', function () {
+    const task = createActiveBtPayload('partial', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'},
+        {index: '3', length: '300', selected: 'false'}
+    ]);
+    const taskOptions = {'bt-remove-unselected-file': 'false'};
+    const context = loadFilterService({
+        tasks: {partial: task},
+        taskOptions: {partial: taskOptions},
+        changeResponses: [
+            {success: false}, {success: false}, {success: false}, {success: true}
+        ]
+    });
+    context.service.enqueueBulk(['partial'], 100);
+    context.service.start();
+    context.tick();
+    context.tick();
+    context.tick();
+
+    task.files[0].selected = 'false';
+    task.files[1].selected = 'true';
+    task.files[2].selected = 'true';
+    taskOptions['bt-remove-unselected-file'] = 'true';
+    context.tick();
+
+    assert.deepStrictEqual(context.changedOptions[3], {gid: 'partial', options: {
+        'select-file': '1,2', 'bt-remove-unselected-file': 'false'
+    }});
+    assert.strictEqual(context.service.getBulkStatus().failed, 1);
+    assert.deepStrictEqual(context.pausedGids, []);
+    assert.deepStrictEqual(context.startedGids, []);
+});
+
+test('stops rollback after three persisted attempts and continues the bulk run', function () {
+    const first = createActiveBtPayload('first', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'},
+        {index: '3', length: '300', selected: 'false'}
+    ]);
+    const second = createActiveBtPayload('second', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const taskOptions = {
+        first: {'bt-remove-unselected-file': 'false'},
+        second: {'bt-remove-unselected-file': 'false'}
+    };
+    const context = loadFilterService({
+        tasks: {first: first, second: second},
+        taskOptions: taskOptions,
+        changeResponses: [
+            {success: false}, {success: false}, {success: false},
+            {success: false}, {success: false}, {success: false}
+        ]
+    });
+    context.service.enqueueBulk(['first', 'second'], 100);
+    context.service.start();
+    context.tick();
+    context.tick();
+    context.tick();
+
+    first.files[0].selected = 'false';
+    first.files[1].selected = 'true';
+    first.files[2].selected = 'true';
+    taskOptions.first['bt-remove-unselected-file'] = 'true';
+
+    context.tick();
+    assert.strictEqual(context.getSavedBulkProgresses()[0].current.restoreRetryCount, 1);
+    context.tick();
+    assert.strictEqual(context.getSavedBulkProgresses()[0].current.restoreRetryCount, 2);
+    context.tick();
+    assert.strictEqual(context.getSavedBulkProgresses()[0].current.restoreRetryCount, 3);
+    context.tick();
+    context.tickMany(4);
+
+    assert.deepStrictEqual(context.changedOptions, [
+        {gid: 'first', options: {'select-file': '2', 'bt-remove-unselected-file': 'false'}},
+        {gid: 'first', options: {'select-file': '2', 'bt-remove-unselected-file': 'false'}},
+        {gid: 'first', options: {'select-file': '2', 'bt-remove-unselected-file': 'false'}},
+        {gid: 'first', options: {'select-file': '1,2', 'bt-remove-unselected-file': 'false'}},
+        {gid: 'first', options: {'select-file': '1,2', 'bt-remove-unselected-file': 'false'}},
+        {gid: 'first', options: {'select-file': '1,2', 'bt-remove-unselected-file': 'false'}},
+        {gid: 'second', options: {'select-file': '2', 'bt-remove-unselected-file': 'true'}}
+    ]);
+    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+    assert.strictEqual(context.service.getBulkStatus().processed, 2);
+    assert.strictEqual(context.service.getBulkStatus().failed, 1);
+    assert.strictEqual(context.service.getBulkStatus().filtered, 1);
+});
+
+test('preserves the rollback retry limit across reload', function () {
+    const task = createActiveBtPayload('task', [
+        {index: '1', length: '20', selected: 'false'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const storage = createApplyingBulkStorage('task');
+    storage.savedBulkProgresses[0].current.stage = 'restoring';
+    storage.savedBulkProgresses[0].current.restoreRetryCount = 3;
+    const context = loadFilterService(Object.assign({
+        tasks: {task: task},
+        taskOptions: {task: {'bt-remove-unselected-file': 'true'}}
+    }, storage));
+
+    context.service.start();
+    context.tick();
+
+    assert.deepStrictEqual(context.changedOptions, []);
+    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+    assert.strictEqual(context.service.getBulkStatus().failed, 1);
+});
+
+test('services a new-task filter job before advancing a bulk task', function () {
+    const bulkTask = createActiveBtPayload('bulk', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({tasks: {
+        bulk: bulkTask,
+        automatic: {gid: 'automatic', status: 'paused', bittorrent: {}, files: [
+            {index: '1', length: '200', selected: 'true'}
+        ]}
+    }});
+    context.service.enqueueBulk(['bulk'], 100);
+    context.service.enqueue('automatic', {
+        thresholdBytes: 100, startAfterFilter: false, sourceType: 'torrent'
+    });
+    context.service.start();
+    context.tick();
+
+    assert.deepStrictEqual(context.statusGids, ['automatic']);
+    assert.deepStrictEqual(context.pausedGids, []);
+});
+
+test('advances a bulk run after one automatic turn even when metadata keeps waiting', function () {
+    const bulkTask = createActiveBtPayload('bulk', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({tasks: {
+        bulk: bulkTask,
+        automatic: {gid: 'automatic', status: 'active', bittorrent: {}, files: []}
+    }});
+    context.service.enqueueBulk(['bulk'], 100);
+    context.service.enqueue('automatic', {
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet'
+    });
+    context.service.start();
+
+    context.tick();
+    assert.deepStrictEqual(context.statusGids, ['automatic']);
+
+    context.tickMany(6);
+    assert.deepStrictEqual(context.changedOptions.map(function (item) { return item.gid; }), ['bulk']);
+    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+    assert(context.service.getJobs().some(function (job) {
+        return job.rootGid === 'automatic' && job.stage === 'waiting-metadata';
+    }));
+});
+
+test('ignores an old bulk status callback after stop and keeps the restarted tick locked', function () {
+    const task = createActiveBtPayload('bulk', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({tasks: {bulk: task}, deferStatus: true});
+    context.service.enqueueBulk(['bulk'], 100);
+    context.service.start();
+    context.tick();
+
+    context.service.stop();
+    context.service.start();
+    context.tick();
+    assert.deepStrictEqual(context.statusGids, ['bulk', 'bulk']);
+
+    context.resolveStatus();
+    context.tick();
+    assert.deepStrictEqual(context.statusGids, ['bulk', 'bulk']);
+    assert.deepStrictEqual(context.changedOptions, []);
+
+    context.resolveStatus();
+    assert.deepStrictEqual(context.changedOptions.map(function (item) { return item.gid; }), ['bulk']);
+    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+});
+
+test('does not continue a bulk RPC chain when stopped during option inspection', function () {
+    const task = createActiveBtPayload('bulk', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({tasks: {bulk: task}, deferOptions: true});
+    context.service.enqueueBulk(['bulk'], 100);
+    context.service.start();
+    context.tick();
+    context.service.stop();
+
+    context.resolveOptions();
+    assert.deepStrictEqual(context.changedOptions, []);
+
+    context.service.start();
+    context.tick();
+    context.resolveOptions();
+    assert.deepStrictEqual(context.changedOptions.map(function (item) { return item.gid; }), ['bulk']);
+});
+
+test('reconciles a stopped bulk option change without sending it twice after restart', function () {
+    const task = createActiveBtPayload('bulk', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({tasks: {bulk: task}, deferChange: true});
+    context.service.enqueueBulk(['bulk'], 100);
+    context.service.start();
+    context.tick();
+    context.service.stop();
+    context.resolveChange();
+
+    context.service.start();
+    context.tick();
+    assert.deepStrictEqual(context.changedOptions.map(function (item) { return item.gid; }), ['bulk']);
+    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+});
+
+test('discards an orphan bulk definition instead of reconstructing an uncommitted run', function () {
+    const context = loadFilterService({
+        savedBulkRuns: [{
+            rpcIdentity: 'http|localhost|6800|jsonrpc',
+            thresholdBytes: 100,
+            gids: ['orphan']
+        }],
+        savedBulkProgresses: []
+    });
+    context.service.start();
+    context.tickMany(4);
+
+    assert.deepStrictEqual(context.statusGids, []);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.getSavedBulkRuns())), []);
+    assert.strictEqual(context.service.getBulkStatus().type, 'idle');
+});
+
+test('does not announce bulk completion until the terminal checkpoint is durable', function () {
+    const task = createActiveBtPayload('bulk', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    let failTerminalRemoval = true;
+    let failureArmed = false;
+    const context = loadFilterService({
+        tasks: {bulk: task},
+        storageSetResult: function (key, value) {
+            if (failureArmed && key === 'BtFileFilterBulkProgress' && value.length === 0 &&
+                failTerminalRemoval) {
+                failTerminalRemoval = false;
+                return false;
+            }
+            return true;
+        }
+    });
+    context.service.enqueueBulk(['bulk'], 100);
+    failureArmed = true;
+    context.service.start();
+    context.tick();
+
+    assert.strictEqual(context.service.getBulkStatus().type, 'running');
+    assert.strictEqual(context.getSavedBulkProgresses().length, 1);
+
+    context.tick();
+    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.getSavedBulkProgresses())), []);
+    assert.deepStrictEqual(context.changedOptions.map(function (item) { return item.gid; }), ['bulk']);
+});
+
 test('renders the remembered filter and global toolbar status', function () {
     const index = read('src/index.html');
     const styles = read('src/styles/core/core.css') +
@@ -2525,7 +3564,7 @@ test('scopes tablet search hiding to active filter controls or status', function
     const globalSearchRule = '.main-header .navbar .navbar-searchbar {\n        display: none;\n    }';
     const scopedSearchRule = '.main-header .navbar.bt-file-filter-active .navbar-searchbar {';
 
-    assert(index.includes("ng-class=\"{'bt-file-filter-active': isNewTaskPage() || btFileFilterStatus.visible}\""));
+    assert(index.includes("ng-class=\"{'bt-file-filter-active': isNewTaskPage() || btFileFilterStatus.visible || showBulkBtFileFilterGlobalStatus()}\""));
     assert(toolbarBreakpoint >= 0);
     assert.strictEqual(core.indexOf(globalSearchRule, toolbarBreakpoint), -1);
     assert(core.indexOf(scopedSearchRule, toolbarBreakpoint) > toolbarBreakpoint);

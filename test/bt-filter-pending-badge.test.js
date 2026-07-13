@@ -75,10 +75,13 @@ const loadBtFileFilterService = function (jobsSeed, rpcIdentity) {
         },
         'ariaNgConstants': constants.ariaNgConstants,
         'ariaNgStorageService': {
-            get: function () { return savedQueue; },
+            get: function (key) {
+                return key === constants.ariaNgConstants.btFileFilterQueueStorageKey ? savedQueue : undefined;
+            },
             set: function (key, value) {
-                assert.strictEqual(key, constants.ariaNgConstants.btFileFilterQueueStorageKey);
-                savedQueue = value;
+                if (key === constants.ariaNgConstants.btFileFilterQueueStorageKey) {
+                    savedQueue = value;
+                }
                 return true;
             }
         },
