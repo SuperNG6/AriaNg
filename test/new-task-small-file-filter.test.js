@@ -238,6 +238,7 @@ const loadFilterService = function (options) {
     let savedBulkRuns = options.savedBulkRuns;
     let savedBulkProgresses = options.savedBulkProgresses;
     let rpcIdentity = options.rpcIdentity || 'http|localhost|6800|jsonrpc';
+    let now = typeof options.now === 'number' ? options.now : 1000;
     const tasks = options.tasks || {};
     const taskOptions = options.taskOptions || {};
     const intervals = [];
@@ -252,6 +253,7 @@ const loadFilterService = function (options) {
     const pendingOptionCallbacks = [];
     const pendingChangeCallbacks = [];
     const pendingStartCallbacks = [];
+    const pendingPauseCallbacks = [];
     const pendingWaitingListCallbacks = [];
     const optionRpcIdentities = [];
     const changeRpcIdentities = [];
@@ -276,7 +278,8 @@ const loadFilterService = function (options) {
             module: function () {
                 return module;
             }
-        }
+        },
+        Date: {now: function () { return now; }}
     });
 
     const dependencies = {
@@ -387,7 +390,8 @@ const loadFilterService = function (options) {
                 const callNumber = changedOptions.length;
                 const applyFailedChange = typeof options.applyFailedChanges === 'function' ?
                     options.applyFailedChanges(callNumber, rpcOptions) : options.applyFailedChanges;
-                if ((response.success || applyFailedChange) && tasks[gid] && rpcOptions['select-file']) {
+                const applySuccessfulChange = response.success && options.applySuccessfulChanges !== false;
+                if ((applySuccessfulChange || applyFailedChange) && tasks[gid] && rpcOptions['select-file']) {
                     const selected = rpcOptions['select-file'].split(',');
                     tasks[gid].files.forEach(function (file) {
                         file.selected = selected.indexOf(String(file.index)) >= 0 ? 'true' : 'false';
@@ -431,7 +435,11 @@ const loadFilterService = function (options) {
                         }
                     });
                 }
-                callback(response);
+                if (options.deferPause) {
+                    pendingPauseCallbacks.push({callback: callback, response: response});
+                } else {
+                    callback(response);
+                }
             }
         }
     };
@@ -456,6 +464,8 @@ const loadFilterService = function (options) {
         intervals: intervals,
         timeouts: timeouts,
         setRpcIdentity: function (value) { rpcIdentity = value; },
+        setNow: function (value) { now = value; },
+        advanceNow: function (milliseconds) { now += milliseconds; },
         resolveStatus: function (response) {
             const pending = pendingStatusCallbacks.shift();
             pending.callback(response || {success: true, data: tasks[pending.gid]});
@@ -470,6 +480,10 @@ const loadFilterService = function (options) {
         },
         resolveStart: function (response) {
             const pending = pendingStartCallbacks.shift();
+            pending.callback(response || pending.response);
+        },
+        resolvePause: function (response) {
+            const pending = pendingPauseCallbacks.shift();
             pending.callback(response || pending.response);
         },
         resolveWaitingList: function (response) {
