@@ -2,7 +2,7 @@
 
 ## 2026-07-14 — Files/filter scoped review fixes
 
-Status: implementation complete; fresh browser and real-aria2 verification pending.
+Status: implementation and planned browser/real-aria2 verification complete; release gates remain deferred.
 
 Confirmed evidence:
 
@@ -21,8 +21,14 @@ Implemented:
 Current verification:
 
 - JavaScript syntax checks and `git diff --check`: pass after each code change.
-- The earlier real convergence result proves the callback/readback fix, but it predates the latest fairness, pause-ownership, and rendering commits. A fresh Playwright and real-aria2 pass is still required.
-- Per maintainer direction, new regression-test code and the full `npm test`/lint/build gates are deferred to release preparation; no current release-gate claim is made.
+- A clean `npx gulp clean` + `npx gulp serve` preview loaded individual `scripts/...` resources from `master`; no stale `.tmp/js/aria-ng-*.min.js` bundle was present.
+- Playwright RPC-mock acceptance passed for Files closed/open, ready/running/complete, concurrent automatic/bulk status priority, route changes, five-second completion expiry, threshold snapshot isolation, and 375 px light/dark layouts. Browser console errors were empty and both mobile screenshots had no overflow or duplicated status.
+- Fresh real aria2 direct convergence at 100 MB changed one approved task from `[1,2]` back to `[1]`, kept `bt-remove-unselected-file=true`, remained `active`, and reported exactly `filtered=1`, `failed=0`, `filteredFiles=1`.
+- A one-shot browser interception then reproduced `changeOption` returning `OK` without applying the first mutation while all later RPCs used real aria2. The observed chain was `applying -> pausing/paused -> resuming/active -> applying`; the row copy changed to “正在启动已过滤任务”, and stable readback finished at `[1]`, cleanup `true`, `active`, with the same one-task/one-file result.
+- A second approved task reproduced an observed user pause with `pauseOwned=false`. The target mutation was intentionally left unconverged; the task stayed `paused`, the batch restored its starting selection `[1,2]`, and the result was `filtered=0`, `failed=1`, `filteredFiles=0`. The verification cleanup then restored the pre-test `[1]` selection and restarted the task.
+- Final readback confirmed both real verification tasks were `active`, selected indexes were `[1]`, and cleanup remained `true`.
+- The first version of the external verification script assumed string `files[].selected`; `aria2TaskService.getTaskStatus` supplies booleans after processing. The affected task was immediately restored to its recorded `[1]`/`active` baseline before rerunning, and later scripts normalize both representations.
+- Per maintainer direction, new regression-test code and the full release gates remain deferred to release preparation. A diagnostic `npm test` run found six existing `bt-filter-pending-badge` harness expectations that call `getPendingGidStageMap()` without starting the coordinator; the new stopped-service contract correctly returns `{}`. This is a test-fixture update for the release-preparation task, not a failed browser or real-aria2 behavior check. No current release-gate claim is made.
 
 ## 2026-07-14 — BT filter consistency improvements
 
