@@ -1958,12 +1958,6 @@
             var bulkDefinition = findBulkDefinition(rpcIdentity);
             var bulkProgress = findBulkProgress(rpcIdentity);
             var currentJobs = getCurrentJobs();
-            if (bulkDefinition && bulkProgress && bulkProgress.current) {
-                tickInProgress = true;
-                activeOperation = operation;
-                processBulkTick(bulkDefinition, bulkProgress, operation);
-                return;
-            }
             if (currentJobs.length > 0 && (!bulkDefinition || !bulkProgress || automaticJobTurn)) {
                 tickInProgress = true;
                 activeOperation = operation;
@@ -1978,6 +1972,7 @@
                 return;
             }
             if (bulkDefinition && bulkProgress) {
+                automaticJobTurn = currentJobs.length > 0;
                 tickInProgress = true;
                 activeOperation = operation;
                 processBulkTick(bulkDefinition, bulkProgress, operation);
@@ -2096,7 +2091,7 @@
             restoredQueue = false;
             bulkStatusRpcIdentity = activeRpcIdentity;
             updateBulkRunningStatus();
-            pollingPromise = $interval(tick, pollingInterval);
+            pollingPromise = $interval(tick, pollingInterval, 0, false);
             return pollingPromise;
         };
 
@@ -2115,8 +2110,11 @@
         };
 
         var buildPendingGidStageMap = function () {
-            var currentJobs = getCurrentJobs();
             var map = {};
+            if (!pollingPromise) {
+                return map;
+            }
+            var currentJobs = getCurrentJobs();
 
             for (var i = 0; i < currentJobs.length; i++) {
                 var job = currentJobs[i];
