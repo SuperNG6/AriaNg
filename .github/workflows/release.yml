@@ -45,6 +45,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Validate release translations
+        run: npm run test:i18n-release
+
       - name: Validate version and release state
         shell: bash
         env:

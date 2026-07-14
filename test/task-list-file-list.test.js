@@ -328,7 +328,7 @@ const loadListController = function (route, options) {
         'ariaNgCommonService': commonService,
         'ariaNgSettingService': settingService,
         'ariaNgBtFileFilterService': {
-            getPendingGidStageMap: function () { return {}; },
+            getPendingGidStageMap: function () { return options.stageMap || {}; },
             getBulkStatus: function () { return options.bulkStatus || {type: 'idle', visible: false}; },
             getBulkPreview: function (tasks, thresholdBytes) {
                 bulkPreviewCalls.push({tasks: tasks, thresholdBytes: thresholdBytes});
@@ -337,13 +337,6 @@ const loadListController = function (route, options) {
             enqueueBulk: function (gids, thresholdBytes) {
                 bulkEnqueues.push({gids: Array.from(gids), thresholdBytes: thresholdBytes});
                 return options.enqueueBulkResult !== false;
-            },
-            acknowledgeBulkCompletion: function (completionId) {
-                if (options.bulkStatus && options.bulkStatus.type === 'complete' &&
-                    completionId === options.bulkStatus.completionId) {
-                    options.bulkStatus.type = 'idle';
-                    options.bulkStatus.visible = false;
-                }
             }
         },
         'aria2TaskService': taskService
@@ -394,7 +387,8 @@ const loadListController = function (route, options) {
         deferNextRequest: function () { deferNextRequest = true; },
         resolveRequest: function (index) { requests[index].respond(); },
         setNextTasks: function (tasks) { nextTasks = tasks; },
-        setNextTaskListResponse: function (response) { nextTaskListResponse = response; }
+        setNextTaskListResponse: function (response) { nextTaskListResponse = response; },
+        trigger: function (name) { listeners[name]({}); }
     };
 };
 
@@ -584,6 +578,17 @@ test('caches one bulk preview per full response instead of scanning in the templ
     assert(read('src/scripts/services/aria2RpcService.js').includes("requestParams.push('following')"));
 });
 
+test('clears rendered filter badges immediately when the filter service stops', function () {
+    const stageMap = {'gid-1': 'applying-filter'};
+    const context = loadListController('downloading', {stageMap: stageMap});
+    assert.strictEqual(context.rootScope.taskContext.list[0].btFilterStage, 'applying-filter');
+
+    delete stageMap['gid-1'];
+    context.trigger('bt-file-filter.stopped');
+
+    assert.strictEqual(context.rootScope.taskContext.list[0].btFilterStage, undefined);
+});
+
 test('confirms and submits the cached bulk GID snapshot once', function () {
     const context = loadListController('downloading');
 
@@ -650,7 +655,11 @@ test('blocks a stale preview after completion until fresh task details arrive', 
     assert.deepStrictEqual(context.confirms, []);
 
     context.tick(5000);
-    assert.strictEqual(bulkStatus.type, 'idle');
+    assert.strictEqual(context.scope.bulkBtFilterPreview.analyzing, false);
+    assert.strictEqual(bulkStatus.type, 'complete');
+    bulkStatus.type = 'idle';
+    bulkStatus.visible = false;
+    context.digest();
     context.scope.startBulkBtFileFilter();
     assert.strictEqual(context.confirms.length, 1);
 });
@@ -669,9 +678,39 @@ test('does not acknowledge completion with a full response requested before comp
     assert.deepStrictEqual(context.confirms, []);
 
     context.tick(5000);
-    assert.strictEqual(bulkStatus.type, 'idle');
+    assert.strictEqual(context.scope.bulkBtFilterPreview.analyzing, false);
+    assert.strictEqual(bulkStatus.type, 'complete');
+    bulkStatus.type = 'idle';
+    bulkStatus.visible = false;
+    context.digest();
     context.scope.startBulkBtFileFilter();
     assert.strictEqual(context.confirms.length, 1);
+});
+
+test('does not let an old full response unlock the preview after completion expires', function () {
+    const bulkStatus = {type: 'idle', visible: false, completionId: 0};
+    const context = loadListController('downloading', {bulkStatus: bulkStatus});
+    context.deferNextRequest();
+    context.tick(5000);
+
+    bulkStatus.type = 'complete';
+    bulkStatus.visible = true;
+    bulkStatus.completionId = 1;
+    context.digest();
+    assert.strictEqual(context.scope.bulkBtFilterPreview.analyzing, true);
+
+    context.deferNextRequest();
+    context.flushTimeouts();
+    assert.strictEqual(context.requests.length, 3);
+
+    bulkStatus.type = 'idle';
+    bulkStatus.visible = false;
+    context.digest();
+    context.resolveRequest(1);
+
+    assert.strictEqual(context.scope.bulkBtFilterPreview.analyzing, true);
+    context.scope.startBulkBtFileFilter();
+    assert.deepStrictEqual(context.confirms, []);
 });
 
 test('threshold debounce never acknowledges completion from cached task details', function () {
@@ -679,11 +718,15 @@ test('threshold debounce never acknowledges completion from cached task details'
     const context = loadListController('downloading', {bulkStatus: bulkStatus});
     context.scope.bulkBtFilterContext.minSizeMb = 200;
     context.scope.changeBulkBtFileFilterThreshold();
+    context.deferNextRequest();
     bulkStatus.type = 'complete';
+    context.digest();
 
     context.flushTimeouts();
 
     assert.strictEqual(bulkStatus.type, 'complete');
+    assert.strictEqual(context.scope.bulkBtFilterPreview.analyzing, true);
+    assert.strictEqual(context.bulkPreviewCalls.length, 1);
     context.scope.startBulkBtFileFilter();
     assert.deepStrictEqual(context.confirms, []);
 });
@@ -702,7 +745,8 @@ test('requests fresh task details after completion when periodic refresh is disa
 
     assert.strictEqual(context.requests.length, 2);
     assert.strictEqual(context.requests[1].full, true);
-    assert.strictEqual(bulkStatus.type, 'idle');
+    assert.strictEqual(context.scope.bulkBtFilterPreview.analyzing, false);
+    assert.strictEqual(bulkStatus.type, 'complete');
 });
 
 test('recovers when the initial completion detail request is lost', function () {
@@ -720,7 +764,30 @@ test('recovers when the initial completion detail request is lost', function () 
 
     assert.strictEqual(context.requests.length, 2);
     assert.strictEqual(context.requests[1].full, true);
-    assert.strictEqual(bulkStatus.type, 'idle');
+    assert.strictEqual(context.scope.bulkBtFilterPreview.analyzing, false);
+    assert.strictEqual(bulkStatus.type, 'complete');
+});
+
+test('keeps the completion refresh watchdog after the notice expires', function () {
+    const bulkStatus = {type: 'complete', visible: true, completionId: 1};
+    const context = loadListController('downloading', {
+        bulkStatus: bulkStatus,
+        refreshInterval: 0,
+        deferInitialRequest: true
+    });
+
+    assert.strictEqual(context.requests.length, 1);
+    assert.strictEqual(context.scope.bulkBtFilterPreview.analyzing, true);
+    context.flushTimeouts();
+
+    bulkStatus.type = 'idle';
+    bulkStatus.visible = false;
+    context.digest();
+    context.setTime(30001);
+    context.flushTimeouts();
+
+    assert.strictEqual(context.requests.length, 2);
+    assert.strictEqual(context.requests[1].full, true);
 });
 
 test('does not schedule bulk completion refreshes outside Downloading', function () {
@@ -755,7 +822,7 @@ test('requests fresh details after an invalid completion threshold is corrected'
     context.flushTimeouts();
     context.flushTimeouts();
 
-    assert.strictEqual(bulkStatus.type, 'idle');
+    assert.strictEqual(bulkStatus.type, 'complete');
 });
 
 test('recovers completion refresh after an older full response is lost', function () {
@@ -776,7 +843,7 @@ test('recovers completion refresh after an older full response is lost', functio
 
     assert.strictEqual(context.requests.length, 3);
     assert.strictEqual(context.requests[2].full, true);
-    assert.strictEqual(bulkStatus.type, 'idle');
+    assert.strictEqual(bulkStatus.type, 'complete');
 });
 
 test('cancels a pending completion retry after Unauthorized', function () {
@@ -826,7 +893,7 @@ test('a new completion is not blocked by the previous completion retry', functio
     context.flushTimeouts();
 
     assert.strictEqual(context.requests.length, 3);
-    assert.strictEqual(bulkStatus.type, 'idle');
+    assert.strictEqual(bulkStatus.type, 'complete');
 });
 
 test('retries a failed completion refresh until fresh details succeed', function () {
@@ -849,7 +916,7 @@ test('retries a failed completion refresh until fresh details succeed', function
     context.flushTimeouts();
 
     assert.strictEqual(context.requests.length, 3);
-    assert.strictEqual(bulkStatus.type, 'idle');
+    assert.strictEqual(bulkStatus.type, 'complete');
 });
 
 test('renders the generic nested panel with read-only file controls', function () {
@@ -888,6 +955,8 @@ test('renders an accessible responsive bulk BT filter rail in both themes', func
     assert(view.includes("bulkBtFilterStatus.type !== 'idle'"));
     assert(view.includes("!bulkBtFilterPreview.analyzing && bulkBtFilterStatus.type === 'complete'"));
     assert(view.includes('ng-click="startBulkBtFileFilter()"'));
+    assert(view.includes('ng-model="bulkBtFilterContext.minSizeMb"'));
+    assert(/ng-if="bulkBtFilterStatus\.type === 'running'"[\s\S]{0,180}ng-value="bulkBtFilterStatus\.thresholdMb"[\s\S]{0,40}disabled/.test(view));
     assert(controls.includes('.bulk-bt-filter-rail'));
     assert(/\.bulk-bt-filter-rail\s*\{[^}]*flex-wrap:\s*wrap;/s.test(controls));
     assert(/\.bulk-bt-filter-controls \.form-control\s*\{[^}]*width:\s*84px;/s.test(controls));
@@ -933,54 +1002,6 @@ test('rebuilds the Angular template cache before reloading the development serve
     assert(gulpfile.includes("gulp.series('prepare-styles', 'prepare-scripts', 'prepare-fonts', 'prepare-views'"));
     assert(gulpfile.includes("gulp.watch('src/views/**/*.html', gulp.series('prepare-views'"));
     assert(!/src\/views\/\*\.html'[\s\S]{0,120}\.on\('change', reload\)/.test(gulpfile));
-});
-
-test('keeps every BT filter translation key and bulk placeholder in sync', function () {
-    const isBtFilterKey = function (key) {
-        return key.indexOf('format.bt-file-filter') === 0 || key.indexOf('BT file filter') === 0 ||
-            key.indexOf('Exclude BT task') === 0 || key.indexOf('BT task pending file filter') === 0;
-    };
-    const defaultLanguage = read('src/scripts/config/defaultLanguage.js');
-    const defaultKeys = Array.from(defaultLanguage.matchAll(/^\s*'([^']+)':/gm))
-        .map(function (match) { return match[1]; })
-        .filter(isBtFilterKey)
-        .sort();
-    const placeholderContract = {
-        'format.bt-file-filter.bulk.ready': ['{{count}}', '{{files}}'],
-        'format.bt-file-filter.bulk.action': ['{{count}}'],
-        'format.bt-file-filter.bulk.confirm-text': ['{{count}}', '{{files}}', '{{threshold}}'],
-        'format.bt-file-filter.bulk.running': ['{{processed}}', '{{total}}'],
-        'format.bt-file-filter.bulk.complete': ['{{filtered}}', '{{skipped}}', '{{failed}}']
-    };
-    const defaultValues = {};
-    Array.from(defaultLanguage.matchAll(/^\s*'([^']+)':\s*'([^']*)'/gm)).forEach(function (match) {
-        defaultValues[match[1]] = match[2];
-    });
-    Object.keys(placeholderContract).forEach(function (key) {
-        placeholderContract[key].forEach(function (placeholder) {
-            assert(defaultValues[key].includes(placeholder), 'default language ' + key + ' lost ' + placeholder);
-        });
-    });
-
-    fs.readdirSync('src/langs').filter(function (name) { return /\.txt$/.test(name); }).forEach(function (name) {
-        const lines = read('src/langs/' + name).split(/\r?\n/);
-        const values = {};
-        lines.forEach(function (line) {
-            const separator = line.indexOf('=');
-            if (separator > 0) {
-                values[line.substring(0, separator)] = line.substring(separator + 1);
-            }
-        });
-        const keys = Object.keys(values).filter(isBtFilterKey).sort();
-        assert.deepStrictEqual(keys, defaultKeys, name + ' BT filter keys differ');
-        Object.keys(placeholderContract).forEach(function (key) {
-            placeholderContract[key].forEach(function (placeholder) {
-                assert(values[key].includes(placeholder), name + ' ' + key + ' lost ' + placeholder);
-            });
-        });
-    });
-
-    assert.strictEqual(defaultKeys.length, 35);
 });
 
 test('keeps bulk progress visible globally when the contextual rail is hidden', function () {

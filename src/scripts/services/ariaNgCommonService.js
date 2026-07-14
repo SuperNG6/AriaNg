@@ -131,6 +131,9 @@
 
                 if (text) {
                     text = ariaNgLocalizationService.getLocalizedText(text, extendSettings.textParams);
+                    if (extendSettings.multilineText) {
+                        text = text.replace(/\\n/g, '\n');
+                    }
                 }
 
                 extendSettings.confirmButtonText = ariaNgLocalizationService.getLocalizedText('OK');

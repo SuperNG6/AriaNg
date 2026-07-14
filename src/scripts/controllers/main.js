@@ -32,6 +32,7 @@
                     if (btFileFilterStarted) {
                         btFileFilterStarted = false;
                         ariaNgBtFileFilterService.stop();
+                        $rootScope.$broadcast('bt-file-filter.stopped');
                     }
                     return;
                 }
@@ -472,6 +473,10 @@
                 !($location.path() === '/downloading' && $scope.isTaskListFileListEnabled());
         };
 
+        $scope.showAutomaticBtFileFilterStatus = function () {
+            return $scope.btFileFilterStatus.visible && !$scope.bulkBtFileFilterStatus.visible;
+        };
+
         $scope.toggleTaskListFileList = function () {
             var enabled = !ariaNgSettingService.getShowFileListInTaskListPage();
 
@@ -525,6 +530,7 @@
             if (btFileFilterStarted) {
                 btFileFilterStarted = false;
                 ariaNgBtFileFilterService.stop();
+                $rootScope.$broadcast('bt-file-filter.stopped');
             }
         });
 

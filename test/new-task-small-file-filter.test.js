@@ -654,6 +654,8 @@ const loadMainController = function (options) {
     let controllerDefinition;
     let globalStatCallback;
     let startCount = 0;
+    let stopCount = 0;
+    const broadcasts = [];
     const status = {visible: false};
     const bulkStatus = {visible: false, type: 'idle'};
     const module = {
@@ -668,7 +670,10 @@ const loadMainController = function (options) {
     });
 
     const scope = {$on: function () {}};
-    const rootScope = {taskContext: {getSelectedTaskIds: function () { return []; }}};
+    const rootScope = {
+        taskContext: {getSelectedTaskIds: function () { return []; }},
+        $broadcast: function (name) { broadcasts.push(name); }
+    };
     const noop = function () {};
     const settingDefaults = {
         getBrowserNotification: function () { return false; },
@@ -701,7 +706,8 @@ const loadMainController = function (options) {
         'ariaNgBtFileFilterService': {
             getStatus: function () { return status; },
             getBulkStatus: function () { return bulkStatus; },
-            start: function () { startCount++; }
+            start: function () { startCount++; },
+            stop: function () { stopCount++; }
         },
         'aria2TaskService': {},
         'aria2SettingService': {
@@ -716,8 +722,11 @@ const loadMainController = function (options) {
     return {
         scope: scope,
         status: status,
+        bulkStatus: bulkStatus,
         respondGlobalStat: function (response) { globalStatCallback(response); },
-        getStartCount: function () { return startCount; }
+        getStartCount: function () { return startCount; },
+        getStopCount: function () { return stopCount; },
+        broadcasts: broadcasts
     };
 };
 
@@ -908,6 +917,10 @@ test('MainController exposes stable filter status and starts after successful gl
     const context = loadMainController();
 
     assert.strictEqual(context.scope.btFileFilterStatus, context.status);
+    context.status.visible = true;
+    assert.strictEqual(context.scope.showAutomaticBtFileFilterStatus(), true);
+    context.bulkStatus.visible = true;
+    assert.strictEqual(context.scope.showAutomaticBtFileFilterStatus(), false);
     assert.strictEqual(context.scope.isNewTaskPage(), true);
     assert.strictEqual(context.getStartCount(), 0);
     context.respondGlobalStat({success: false, data: {message: 'offline'}});
@@ -920,6 +933,9 @@ test('MainController exposes stable filter status and starts after successful gl
         enabled: true,
         thresholdBytes: 104857600
     });
+    context.respondGlobalStat({success: false, data: {message: 'Unauthorized'}});
+    assert.strictEqual(context.getStopCount(), 1);
+    assert.deepStrictEqual(context.broadcasts, ['bt-file-filter.stopped']);
 });
 
 test('defines safe small-file filter defaults and queue storage key', function () {
@@ -2887,6 +2903,26 @@ test('previews one hundred thousand BT files in one linear file pass', function 
     assert.strictEqual(filePropertyReads, 300000);
 });
 
+test('exposes the current bulk task, stage, threshold, and badge mapping while applying', function () {
+    const task = createActiveBtPayload('bulk', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({tasks: {bulk: task}, deferChange: true});
+
+    context.service.enqueueBulk(['bulk'], 100);
+    context.service.start();
+    context.tick();
+
+    assert.strictEqual(context.service.getBulkStatus().currentGid, 'bulk');
+    assert.strictEqual(context.service.getBulkStatus().currentStage, 'applying');
+    assert.strictEqual(context.service.getBulkStatus().thresholdBytes, 100);
+    assert.strictEqual(context.service.getPendingGidStageMap().bulk, 'applying-filter');
+
+    context.service.stop();
+    assert.strictEqual(context.service.getPendingGidStageMap().bulk, undefined);
+});
+
 test('processes a bulk run one task at a time without pausing active downloads', function () {
     const tasks = {
         one: createActiveBtPayload('one', [
@@ -2920,7 +2956,7 @@ test('processes a bulk run one task at a time without pausing active downloads',
 
     context.timeouts[context.timeouts.length - 1].callback();
     assert.strictEqual(context.service.getBulkStatus().visible, false);
-    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+    assert.strictEqual(context.service.getBulkStatus().type, 'idle');
 });
 
 test('does not inspect the next bulk task while the current option change is unresolved', function () {
@@ -3564,7 +3600,7 @@ test('scopes tablet search hiding to active filter controls or status', function
     const globalSearchRule = '.main-header .navbar .navbar-searchbar {\n        display: none;\n    }';
     const scopedSearchRule = '.main-header .navbar.bt-file-filter-active .navbar-searchbar {';
 
-    assert(index.includes("ng-class=\"{'bt-file-filter-active': isNewTaskPage() || btFileFilterStatus.visible || showBulkBtFileFilterGlobalStatus()}\""));
+    assert(index.includes("ng-class=\"{'bt-file-filter-active': isNewTaskPage() || showAutomaticBtFileFilterStatus() || showBulkBtFileFilterGlobalStatus()}\""));
     assert(toolbarBreakpoint >= 0);
     assert.strictEqual(core.indexOf(globalSearchRule, toolbarBreakpoint), -1);
     assert(core.indexOf(scopedSearchRule, toolbarBreakpoint) > toolbarBreakpoint);

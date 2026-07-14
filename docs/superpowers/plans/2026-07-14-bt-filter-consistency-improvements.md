@@ -8,6 +8,8 @@
 
 **Tech Stack:** AngularJS 1.6, Node `assert` VM harnesses, Gulp, Playwright browser inspection, aria2 JSON-RPC.
 
+**Execution status (2026-07-14):** Tasks 1–6 are complete for development. The release-only all-language check intentionally remains blocked until copy freeze, as specified in Task 5.
+
 ---
 
 ## File map
@@ -178,10 +180,12 @@ During `running`, disable the threshold input, show the immutable threshold from
 
 - [ ] **Step 3: Move scope and risk into the existing confirmation**
 
-Keep one confirmation component and update `format.bt-file-filter.bulk.confirm-text` to say:
+Keep one confirmation component and update `format.bt-file-filter.bulk.confirm-text` to three concise lines:
 
 ```text
-Process {{count}} active BT tasks and exclude {{files}} currently selected files smaller than {{threshold}} MB. Magnet metadata, paused, and waiting tasks are not processed, and manually excluded files are not reselected. Tasks that are no longer eligible are skipped; failed changes attempt to restore the original selection. aria2 may delete newly excluded files when each BT download completes.
+Filter {{count}} tasks; exclude {{files}} selected files under {{threshold}} MB.
+Skip magnet metadata, paused, and waiting tasks; preserve manual exclusions.
+Attempt to restore selections on failure; aria2 may delete excluded files on completion.
 ```
 
 Use the approved Simplified Chinese wording from `docs/prd/bt-filter-improvement.md`. Do not update the other nine language files during development.

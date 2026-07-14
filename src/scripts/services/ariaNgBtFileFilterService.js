@@ -312,6 +312,10 @@
             visible: false,
             type: 'idle',
             completionId: 0,
+            currentGid: '',
+            currentStage: '',
+            thresholdBytes: 0,
+            thresholdMb: 0,
             total: 0,
             processed: 0,
             filtered: 0,
@@ -525,6 +529,10 @@
             bulkStatusVersion++;
             bulkStatus.visible = false;
             bulkStatus.type = 'idle';
+            bulkStatus.currentGid = '';
+            bulkStatus.currentStage = '';
+            bulkStatus.thresholdBytes = 0;
+            bulkStatus.thresholdMb = 0;
             bulkStatus.total = 0;
             bulkStatus.processed = 0;
             bulkStatus.filtered = 0;
@@ -547,6 +555,10 @@
             bulkStatus.visible = true;
             bulkStatusVersion++;
             bulkStatus.type = 'running';
+            bulkStatus.currentGid = progress.current ? progress.current.gid : '';
+            bulkStatus.currentStage = progress.current ? progress.current.stage : '';
+            bulkStatus.thresholdBytes = definition.thresholdBytes;
+            bulkStatus.thresholdMb = definition.thresholdBytes / 1024 / 1024;
             bulkStatus.total = definition.gids.length;
             bulkStatus.processed = progress.processed;
             bulkStatus.filtered = progress.filtered;
@@ -1426,6 +1438,10 @@
             bulkStatus.visible = true;
             bulkStatus.type = 'complete';
             bulkStatus.completionId++;
+            bulkStatus.currentGid = '';
+            bulkStatus.currentStage = '';
+            bulkStatus.thresholdBytes = definition.thresholdBytes;
+            bulkStatus.thresholdMb = definition.thresholdBytes / 1024 / 1024;
             bulkStatus.total = definition.gids.length;
             bulkStatus.processed = progress.processed;
             bulkStatus.filtered = progress.filtered;
@@ -1435,7 +1451,7 @@
             var completionStatusVersion = bulkStatusVersion;
             $timeout(function () {
                 if (bulkStatusVersion === completionStatusVersion && bulkStatus.type === 'complete') {
-                    bulkStatus.visible = false;
+                    setBulkIdleStatus();
                 }
             }, 5000);
             if (activeOperation === rpcIdentity) {
@@ -1501,6 +1517,7 @@
                 settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
                 return;
             }
+            updateBulkRunningStatus();
 
             aria2TaskService.changeTaskOptions(task.gid, {
                 'select-file': current.targetSelectedIndexes.join(','),
@@ -1575,6 +1592,7 @@
                 finishBulkTick(rpcIdentity);
                 return;
             }
+            updateBulkRunningStatus();
             restoreBulkOptions(definition, progress, task, options, rpcIdentity);
         };
 
@@ -1718,6 +1736,7 @@
                     finishBulkTick(rpcIdentity);
                     return;
                 }
+                updateBulkRunningStatus();
             }
 
             if (progress.current.stage === 'inspecting') {
@@ -1925,6 +1944,19 @@
                 }
             }
 
+            var bulkProgress = pollingPromise ? findBulkProgress(getCurrentRpcIdentity()) : null;
+            if (bulkProgress && bulkProgress.current) {
+                var bulkStageMap = {
+                    inspecting: 'bulk-inspecting',
+                    applying: 'applying-filter',
+                    restoring: 'restoring-full'
+                };
+                var stage = bulkStageMap[bulkProgress.current.stage];
+                if (stage) {
+                    map[bulkProgress.current.gid] = stage;
+                }
+            }
+
             return map;
         };
 
@@ -1952,13 +1984,6 @@
                     updateBulkRunningStatus();
                 }
                 return bulkStatus;
-            },
-            acknowledgeBulkCompletion: function (completionId) {
-                if (bulkStatus.type === 'complete' &&
-                    bulkStatusRpcIdentity === getCurrentRpcIdentity() &&
-                    completionId === bulkStatus.completionId) {
-                    setBulkIdleStatus();
-                }
             },
             start: start,
             stop: stop

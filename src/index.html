@@ -69,7 +69,7 @@
         </div>
 
         <nav class="navbar navbar-static-top" role="navigation"
-             ng-class="{'bt-file-filter-active': isNewTaskPage() || btFileFilterStatus.visible || showBulkBtFileFilterGlobalStatus()}">
+             ng-class="{'bt-file-filter-active': isNewTaskPage() || showAutomaticBtFileFilterStatus() || showBulkBtFileFilterGlobalStatus()}">
             <div class="navbar-toolbar">
                 <ul class="nav navbar-nav">
                     <li>
@@ -176,8 +176,8 @@
                         </a>
                     </li>
                     <li class="bt-file-filter-group"
-                        ng-if="isNewTaskPage() || btFileFilterStatus.visible || showBulkBtFileFilterGlobalStatus()"
-                        ng-class="{'has-filter-rule': isNewTaskPage(), 'has-filter-status': btFileFilterStatus.visible || showBulkBtFileFilterGlobalStatus()}">
+                        ng-if="isNewTaskPage() || showAutomaticBtFileFilterStatus() || showBulkBtFileFilterGlobalStatus()"
+                        ng-class="{'has-filter-rule': isNewTaskPage(), 'has-filter-status': showAutomaticBtFileFilterStatus() || showBulkBtFileFilterGlobalStatus()}">
                         <div class="bt-file-filter-toolbar" ng-if="isNewTaskPage()">
                             <div class="bt-file-filter-rule"
                                  ng-class="{'is-enabled': btFileFilterContext.enabled, 'has-error': btFileFilterContext.enabled && !isBtFileFilterValid()}">
@@ -199,7 +199,7 @@
                                       translate>BT file filter size error</span>
                             </div>
                         </div>
-                        <div class="bt-file-filter-status" ng-if="btFileFilterStatus.visible"
+                        <div class="bt-file-filter-status" ng-if="showAutomaticBtFileFilterStatus()"
                             ng-class="'status-' + btFileFilterStatus.type"
                             title="{{btFileFilterStatus.textKey | translate: btFileFilterStatus.textParams}}"
                             role="status" aria-live="polite" aria-atomic="true">
@@ -213,18 +213,18 @@
                         <div class="bt-file-filter-status bulk-bt-file-filter-global-status"
                              ng-if="showBulkBtFileFilterGlobalStatus()"
                              ng-class="'status-' + bulkBtFileFilterStatus.type"
-                             title="{{(bulkBtFileFilterStatus.type === 'running' ? 'format.bt-file-filter.bulk.running' : 'format.bt-file-filter.bulk.complete') | translate: bulkBtFileFilterStatus}}"
+                             title="{{(bulkBtFileFilterStatus.type === 'running' ? 'format.bt-file-filter.bulk.running' : 'format.bt-file-filter.bulk.complete') | translate: {processed: bulkBtFileFilterStatus.processed, total: bulkBtFileFilterStatus.total, threshold: bulkBtFileFilterStatus.thresholdMb, filtered: bulkBtFileFilterStatus.filtered, skipped: bulkBtFileFilterStatus.skipped, failed: bulkBtFileFilterStatus.failed} }}"
                              role="status" aria-live="polite" aria-atomic="true">
                             <i class="fa" aria-hidden="true"
                                ng-class="{'fa-circle-o-notch fa-spin': bulkBtFileFilterStatus.type === 'running', 'fa-check-circle': bulkBtFileFilterStatus.type === 'complete'}"></i>
                             <span class="bt-file-filter-status-full" aria-hidden="true" ng-if="bulkBtFileFilterStatus.type === 'running'"
-                                  ng-bind="'format.bt-file-filter.bulk.running' | translate: {processed: bulkBtFileFilterStatus.processed, total: bulkBtFileFilterStatus.total}"></span>
+                                  ng-bind="'format.bt-file-filter.bulk.running' | translate: {processed: bulkBtFileFilterStatus.processed, total: bulkBtFileFilterStatus.total, threshold: bulkBtFileFilterStatus.thresholdMb}"></span>
                             <span class="bt-file-filter-status-full" aria-hidden="true" ng-if="bulkBtFileFilterStatus.type === 'complete'"
                                   ng-bind="'format.bt-file-filter.bulk.complete' | translate: {filtered: bulkBtFileFilterStatus.filtered, skipped: bulkBtFileFilterStatus.skipped, failed: bulkBtFileFilterStatus.failed}"></span>
                             <span class="bt-file-filter-status-compact" aria-hidden="true"
                                   ng-bind="bulkBtFileFilterStatus.type === 'running' ? (bulkBtFileFilterStatus.processed + '/' + bulkBtFileFilterStatus.total) : bulkBtFileFilterStatus.filtered"></span>
                             <span class="bt-file-filter-status-accessible"
-                                  ng-bind="(bulkBtFileFilterStatus.type === 'running' ? 'format.bt-file-filter.bulk.running' : 'format.bt-file-filter.bulk.complete') | translate: {processed: bulkBtFileFilterStatus.processed, total: bulkBtFileFilterStatus.total, filtered: bulkBtFileFilterStatus.filtered, skipped: bulkBtFileFilterStatus.skipped, failed: bulkBtFileFilterStatus.failed}"></span>
+                                  ng-bind="(bulkBtFileFilterStatus.type === 'running' ? 'format.bt-file-filter.bulk.running' : 'format.bt-file-filter.bulk.complete') | translate: {processed: bulkBtFileFilterStatus.processed, total: bulkBtFileFilterStatus.total, threshold: bulkBtFileFilterStatus.thresholdMb, filtered: bulkBtFileFilterStatus.filtered, skipped: bulkBtFileFilterStatus.skipped, failed: bulkBtFileFilterStatus.failed}"></span>
                         </div>
                     </li>
                 </ul>

@@ -44,9 +44,10 @@ Authoritative fera facts that Claude would otherwise get wrong:
 ## Internationalization Contract
 
 - English source strings live in `src/scripts/config/defaultLanguage.js` (a JS object). Per-language overrides live in `src/langs/*.txt` as `key=value` lines. There is **no** `en.txt`.
-- The BT-filter feature defines **25 keys** (`Exclude BT task files smaller than`, `BT file filter suffix/threshold/size error/warning/cleanup warning`, `BT task pending file filter`, `format.bt-file-filter.*`). These must exist **identically** in `defaultLanguage.js` **and all 10** `src/langs/*.txt`. A missing key in any file silently falls back to English in production.
-- Preserve placeholders `{{count}}`, `{{processed}}`, `{{total}}`, `{{filtered}}`, `{{full}}` **verbatim** in every translation — `$translate` injects them by name.
-- Any new/changed i18n key must be added to every language file in the same change. `grep -cE "format\.bt-file-filter|BT file filter|Exclude BT task|BT task pending file filter"` each `src/langs/*.txt` and `defaultLanguage.js` — counts must match (currently 25 each).
+- During feature development, add or change BT-filter copy only in `defaultLanguage.js` and `src/langs/zh_Hans.txt`. Other locales may fall back to English until copy freezes.
+- `npm test` checks that English and Simplified Chinese BT-filter keys and named placeholders match. Do not assert a literal key count.
+- Before a release, translate the frozen copy in every `src/langs/*.txt` file and run `npm run test:i18n-release`; the release workflow blocks missing keys or placeholder drift.
+- Preserve every named placeholder (for example `{{count}}`, `{{files}}`, `{{threshold}}`, `{{processed}}`, `{{total}}`, `{{filtered}}`, `{{skipped}}`, `{{failed}}`, and `{{full}}`) verbatim in each required translation.
 
 ## SDD Workflow
 

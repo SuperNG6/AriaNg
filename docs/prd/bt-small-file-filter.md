@@ -119,7 +119,7 @@ waiting-metadata
 1. aria2 已接收 add 请求、但浏览器在收到 GID 回包前关闭或断线时，job 尚未持久化；payload child 可能保持 paused 且无法自动恢复。
 2. 已 `complete`、`error` 或 seeding 的 child 目前没有统一的“禁止筛选写操作”守卫。
 3. 第三次 `changeOption` 回包不确定时的对账是缓解，不是原子事务；极端乱序仍可能与恢复全选竞争。
-4. `stop()` 后的迟到回调没有 lifecycle epoch 隔离；多标签页同时写队列也没有合并/锁。
+4. 多标签页同时写队列没有合并或锁；当前实现仅保证单页面生命周期内的迟到回调不会继续旧操作。
 
 其中，“添加请求已被 aria2 接收但浏览器未收到 GID 回包”可通过预分配手工 GID 降低风险，但会把 GID 全局唯一性、冲突处理与兼容性责任引入主流程；以当前发生概率和普通用户收益衡量，不采用该方案。
 
@@ -144,7 +144,7 @@ waiting-metadata
 4. `npx gulp clean build-bundle`
 5. 若影响界面，375px 浅色与深色人工检查
 
-该功能有 25 个专属翻译键；任何新增或改名必须同步 `src/scripts/config/defaultLanguage.js` 与全部 10 个 `src/langs/*.txt`，并保持 `{{count}}`、`{{processed}}`、`{{total}}`、`{{filtered}}`、`{{full}}` 占位符不变。
+功能开发阶段只同步 `src/scripts/config/defaultLanguage.js` 与 `src/langs/zh_Hans.txt`，`npm test` 检查两者的 BT 过滤键和全部命名占位符一致，不固定键数量。文案冻结、准备发版时再同步全部 `src/langs/*.txt`，并执行 `npm run test:i18n-release`；缺键或占位符漂移会阻止发版。
 
 ## 10. 历史资料
 
