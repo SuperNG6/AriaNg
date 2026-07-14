@@ -16,7 +16,11 @@
         ];
         var missingRootScanLimit = 3;
         var pollingInterval = 250;
-        var allowedBulkStages = ['inspecting', 'applying', 'restoring'];
+        var allowedBulkStages = ['inspecting', 'pausing', 'applying', 'restoring', 'resuming'];
+        var bulkPauseRetryDelay = 30000;
+        var bulkMutationRestartDelay = 1000;
+        var bulkConvergenceDelay = 1000;
+        var bulkMutationRetryLimit = 3;
 
         var normalizeInteger = function (value, defaultValue) {
             var number = Number(value);
@@ -191,6 +195,12 @@
                 stage: current.stage,
                 retryCount: normalizeInteger(current.retryCount, 0),
                 restoreRetryCount: normalizeInteger(current.restoreRetryCount, 0),
+                pauseRetryCount: normalizeInteger(current.pauseRetryCount, 0),
+                pauseRequestedAt: normalizeInteger(current.pauseRequestedAt, 0),
+                mutationRequestedAt: normalizeInteger(current.mutationRequestedAt, 0),
+                verifiedAt: normalizeInteger(current.verifiedAt, 0),
+                resumeRetryCount: normalizeInteger(current.resumeRetryCount, 0),
+                resumeOutcome: current.resumeOutcome === 'filtered' ? 'filtered' : 'failed',
                 filteredFileCount: normalizeInteger(current.filteredFileCount, 0)
             };
             if (!sanitized.gid) {
@@ -1513,8 +1523,10 @@
             var current = progress.current;
             current.stage = 'applying';
             current.retryCount++;
+            current.mutationRequestedAt = Date.now();
+            current.verifiedAt = 0;
             if (!saveBulkProgresses()) {
-                settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                finishBulkTick(rpcIdentity);
                 return;
             }
             updateBulkRunningStatus();
@@ -1527,14 +1539,106 @@
                     finishBulkTick(rpcIdentity);
                     return;
                 }
-                if (isSuccessfulResponse(response)) {
-                    settleBulkCurrent(definition, progress, 'filtered', rpcIdentity);
-                } else if (isNotFoundResponse(response)) {
+                if (isNotFoundResponse(response)) {
                     settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
                 } else {
                     finishBulkTick(rpcIdentity);
                 }
             }, true);
+        };
+
+        var requestBulkPause = function (definition, progress, rpcIdentity) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+            var current = progress.current;
+            if (current.pauseRetryCount >= bulkMutationRetryLimit) {
+                settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                return;
+            }
+            current.pauseRetryCount++;
+            current.pauseRequestedAt = Date.now();
+            if (!saveBulkProgresses()) {
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+            updateBulkRunningStatus();
+            aria2TaskService.pauseTasks([current.gid], function () {
+                if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                    finishBulkTick(rpcIdentity);
+                    return;
+                }
+                finishBulkTick(rpcIdentity);
+            }, true);
+        };
+
+        var beginBulkPause = function (definition, progress, outcome, rpcIdentity) {
+            var current = progress.current;
+            var previousStage = current.stage;
+            var previousResumeOutcome = current.resumeOutcome;
+            var previousPauseRetryCount = current.pauseRetryCount;
+            var previousPauseRequestedAt = current.pauseRequestedAt;
+            current.stage = 'pausing';
+            current.resumeOutcome = outcome;
+            current.pauseRetryCount = 0;
+            current.pauseRequestedAt = 0;
+            current.verifiedAt = 0;
+            if (!saveBulkProgresses()) {
+                current.stage = previousStage;
+                current.resumeOutcome = previousResumeOutcome;
+                current.pauseRetryCount = previousPauseRetryCount;
+                current.pauseRequestedAt = previousPauseRequestedAt;
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+            updateBulkRunningStatus();
+            requestBulkPause(definition, progress, rpcIdentity);
+        };
+
+        var requestBulkResume = function (definition, progress, rpcIdentity) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+            var current = progress.current;
+            if (current.resumeRetryCount >= bulkMutationRetryLimit) {
+                settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                return;
+            }
+            current.resumeRetryCount++;
+            if (!saveBulkProgresses()) {
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+            updateBulkRunningStatus();
+            aria2TaskService.startTasks([current.gid], function () {
+                if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                    finishBulkTick(rpcIdentity);
+                    return;
+                }
+                finishBulkTick(rpcIdentity);
+            }, true);
+        };
+
+        var beginBulkResume = function (definition, progress, outcome, rpcIdentity) {
+            var current = progress.current;
+            var previousStage = current.stage;
+            var previousResumeOutcome = current.resumeOutcome;
+            var previousResumeRetryCount = current.resumeRetryCount;
+            current.stage = 'resuming';
+            current.resumeOutcome = outcome;
+            current.resumeRetryCount = 0;
+            current.verifiedAt = 0;
+            if (!saveBulkProgresses()) {
+                current.stage = previousStage;
+                current.resumeOutcome = previousResumeOutcome;
+                current.resumeRetryCount = previousResumeRetryCount;
+                finishBulkTick(rpcIdentity);
+                return;
+            }
+            updateBulkRunningStatus();
+            requestBulkResume(definition, progress, rpcIdentity);
         };
 
         var restoreBulkOptions = function (definition, progress, task, options, rpcIdentity) {
@@ -1550,13 +1654,15 @@
                 return;
             }
 
-            if (current.restoreRetryCount >= 3) {
+            if (current.restoreRetryCount >= bulkMutationRetryLimit) {
                 settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
                 return;
             }
 
             var previousRestoreRetryCount = current.restoreRetryCount;
             current.restoreRetryCount++;
+            current.mutationRequestedAt = Date.now();
+            current.verifiedAt = 0;
             if (!saveBulkProgresses()) {
                 current.restoreRetryCount = previousRestoreRetryCount;
                 finishBulkTick(rpcIdentity);
@@ -1571,9 +1677,7 @@
                     finishBulkTick(rpcIdentity);
                     return;
                 }
-                if (isSuccessfulResponse(response)) {
-                    settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
-                } else if (isNotFoundResponse(response)) {
+                if (isNotFoundResponse(response)) {
                     settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
                 } else {
                     finishBulkTick(rpcIdentity);
@@ -1621,6 +1725,10 @@
             current.targetRemoveUnselectedFile = plan.originalSelectedIndexes.length === plan.allIndexes.length ?
                 'true' : originalCleanup;
             current.filteredFileCount = plan.filteredFileCount;
+            current.pauseRetryCount = 0;
+            current.pauseRequestedAt = 0;
+            current.resumeRetryCount = 0;
+            current.resumeOutcome = 'filtered';
             applyBulkOptions(definition, progress, task, rpcIdentity);
         };
 
@@ -1659,27 +1767,64 @@
 
                 var current = progress.current;
                 var options = response.data || {};
-                if (current.stage === 'restoring') {
-                    restoreBulkOptions(definition, progress, task, options, rpcIdentity);
-                    return;
-                }
-                if (current.stage === 'applying') {
-                    if (sameIndexes(task.files, current.targetSelectedIndexes) &&
-                        getOptionValue(options, 'bt-remove-unselected-file', 'false') ===
-                            current.targetRemoveUnselectedFile) {
-                        settleBulkCurrent(definition, progress, 'filtered', rpcIdentity);
-                    } else if (!isActiveBtPayloadTask(task)) {
-                        if (sameIndexes(task.files, current.originalSelectedIndexes) &&
-                            getOptionValue(options, 'bt-remove-unselected-file', 'false') ===
-                                current.originalRemoveUnselectedFile) {
-                            settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                if (current.stage === 'applying' || current.stage === 'restoring' ||
+                    current.stage === 'pausing' || current.stage === 'resuming') {
+                    var outcome = current.stage === 'applying' ? 'filtered' :
+                        current.stage === 'restoring' ? 'failed' : current.resumeOutcome;
+                    var expectedIndexes = outcome === 'filtered' ? current.targetSelectedIndexes :
+                        current.originalSelectedIndexes;
+                    var expectedCleanup = outcome === 'filtered' ? current.targetRemoveUnselectedFile :
+                        current.originalRemoveUnselectedFile;
+                    if (sameIndexes(task.files, expectedIndexes) &&
+                        getOptionValue(options, 'bt-remove-unselected-file', 'false') === expectedCleanup) {
+                        if (current.verifiedAt &&
+                            Date.now() - current.verifiedAt >= bulkConvergenceDelay) {
+                            if (task.status === 'paused') {
+                                beginBulkResume(definition, progress, outcome, rpcIdentity);
+                            } else {
+                                settleBulkCurrent(definition, progress, outcome, rpcIdentity);
+                            }
+                        } else if (!current.verifiedAt) {
+                            current.verifiedAt = Date.now();
+                            if (!saveBulkProgresses()) {
+                                current.verifiedAt = 0;
+                            }
+                            finishBulkTick(rpcIdentity);
                         } else {
-                            beginBulkRestoration(definition, progress, task, options, rpcIdentity);
+                            finishBulkTick(rpcIdentity);
                         }
-                    } else if (current.retryCount >= 3) {
-                        beginBulkRestoration(definition, progress, task, options, rpcIdentity);
+                    } else if (current.stage === 'applying' || current.stage === 'restoring') {
+                        current.verifiedAt = 0;
+                        if (Date.now() - current.mutationRequestedAt < bulkMutationRestartDelay) {
+                            finishBulkTick(rpcIdentity);
+                        } else if (task.status === 'paused') {
+                            beginBulkResume(definition, progress, outcome, rpcIdentity);
+                        } else {
+                            beginBulkPause(definition, progress, outcome, rpcIdentity);
+                        }
+                    } else if (current.stage === 'pausing') {
+                        current.verifiedAt = 0;
+                        if (task.status === 'paused') {
+                            if (Date.now() - current.pauseRequestedAt < bulkMutationRestartDelay) {
+                                finishBulkTick(rpcIdentity);
+                            } else {
+                                beginBulkResume(definition, progress, outcome, rpcIdentity);
+                            }
+                        } else if (Date.now() - current.pauseRequestedAt >= bulkPauseRetryDelay) {
+                            requestBulkPause(definition, progress, rpcIdentity);
+                        } else {
+                            finishBulkTick(rpcIdentity);
+                        }
+                    } else if (outcome === 'filtered') {
+                        if (current.retryCount >= bulkMutationRetryLimit) {
+                            beginBulkRestoration(definition, progress, task, options, rpcIdentity);
+                        } else {
+                            applyBulkOptions(definition, progress, task, rpcIdentity);
+                        }
+                    } else if (current.restoreRetryCount >= bulkMutationRetryLimit) {
+                        settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
                     } else {
-                        applyBulkOptions(definition, progress, task, rpcIdentity);
+                        restoreBulkOptions(definition, progress, task, options, rpcIdentity);
                     }
                     return;
                 }
@@ -1694,7 +1839,8 @@
             }
             if (!response || !response.success) {
                 if (isNotFoundResponse(response)) {
-                    settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                    settleBulkCurrent(definition, progress,
+                        progress.current.stage === 'resuming' ? 'failed' : 'skipped', rpcIdentity);
                 } else {
                     finishBulkTick(rpcIdentity);
                 }
@@ -1703,6 +1849,22 @@
 
             var task = response.data;
             var current = progress.current;
+            if (current.stage === 'resuming') {
+                if (task.status !== 'paused') {
+                    inspectBulkOptions(definition, progress, task, rpcIdentity);
+                } else {
+                    requestBulkResume(definition, progress, rpcIdentity);
+                }
+                return;
+            }
+            if (current.stage !== 'inspecting' && !isBtPayloadTask(task)) {
+                if (task.status === 'paused') {
+                    beginBulkResume(definition, progress, 'failed', rpcIdentity);
+                } else {
+                    settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                }
+                return;
+            }
             if (current.stage === 'inspecting' &&
                 (isTaskOwnedByAutomaticJob(task,
                     getAutomaticOwnedGids(getOperationRpcIdentity(rpcIdentity))) ||
@@ -1713,6 +1875,22 @@
             if (current.stage !== 'inspecting' && (!task.bittorrent || !task.bittorrent.info ||
                 getRealFiles(task.files).length < 1)) {
                 settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                return;
+            }
+            if (current.stage === 'pausing') {
+                if (task.status === 'paused' || task.status === 'active' || task.status === 'waiting') {
+                    inspectBulkOptions(definition, progress, task, rpcIdentity);
+                } else {
+                    settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                }
+                return;
+            }
+            if (current.stage === 'applying' || current.stage === 'restoring') {
+                if (task.status === 'paused' || task.status === 'active' || task.status === 'waiting') {
+                    inspectBulkOptions(definition, progress, task, rpcIdentity);
+                } else {
+                    settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                }
                 return;
             }
             inspectBulkOptions(definition, progress, task, rpcIdentity);
@@ -1729,6 +1907,12 @@
                     stage: 'inspecting',
                     retryCount: 0,
                     restoreRetryCount: 0,
+                    pauseRetryCount: 0,
+                    pauseRequestedAt: 0,
+                    mutationRequestedAt: 0,
+                    verifiedAt: 0,
+                    resumeRetryCount: 0,
+                    resumeOutcome: 'failed',
                     filteredFileCount: 0
                 };
                 if (!saveBulkProgresses()) {
@@ -1948,8 +2132,10 @@
             if (bulkProgress && bulkProgress.current) {
                 var bulkStageMap = {
                     inspecting: 'bulk-inspecting',
+                    pausing: 'applying-filter',
                     applying: 'applying-filter',
-                    restoring: 'restoring-full'
+                    restoring: 'restoring-full',
+                    resuming: 'starting-filtered'
                 };
                 var stage = bulkStageMap[bulkProgress.current.stage];
                 if (stage) {

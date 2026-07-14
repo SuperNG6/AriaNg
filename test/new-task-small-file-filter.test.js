@@ -402,6 +402,10 @@ const loadFilterService = function (options) {
                         targetOptions['select-file'] = options.normalizedSelectFile;
                     }
                 }
+                if (options.onChange) {
+                    options.onChange(callNumber, rpcOptions, tasks[gid],
+                        taskOptions[gid] || taskOptions, response);
+                }
                 if (options.deferChange) {
                     pendingChangeCallbacks.push({callback: callback, response: response});
                 } else {
@@ -496,6 +500,7 @@ const loadFilterService = function (options) {
         tick: function () {
             intervals.forEach(function (interval) {
                 if (!interval.cancelled) {
+                    now += interval.delay;
                     interval.callback();
                 }
             });
@@ -504,6 +509,7 @@ const loadFilterService = function (options) {
             for (let i = 0; i < count; i++) {
                 intervals.forEach(function (interval) {
                     if (!interval.cancelled) {
+                        now += interval.delay;
                         interval.callback();
                     }
                 });
@@ -515,6 +521,7 @@ const loadFilterService = function (options) {
             }); i++) {
                 intervals.forEach(function (interval) {
                     if (!interval.cancelled) {
+                        now += interval.delay;
                         interval.callback();
                     }
                 });
@@ -2937,40 +2944,78 @@ test('exposes the current bulk task, stage, threshold, and badge mapping while a
     assert.strictEqual(context.service.getPendingGidStageMap().bulk, undefined);
 });
 
-test('processes a bulk run one task at a time without pausing active downloads', function () {
-    const tasks = {
-        one: createActiveBtPayload('one', [
-            {index: '1', length: '20', selected: 'true'},
-            {index: '2', length: '200', selected: 'true'}
-        ]),
-        two: createActiveBtPayload('two', [
-            {index: '1', length: '30', selected: 'true'},
-            {index: '2', length: '300', selected: 'true'}
-        ])
-    };
-    const context = loadFilterService({tasks: tasks, taskOptions: {
-        one: {'bt-remove-unselected-file': 'false'},
-        two: {'bt-remove-unselected-file': 'false'}
-    }});
+test('force-pauses an active bulk task when its option change does not converge', function () {
+    const task = createActiveBtPayload('one', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({
+        tasks: {one: task},
+        taskOptions: {one: {'bt-remove-unselected-file': 'false'}},
+        applySuccessfulChanges: false
+    });
 
-    assert.strictEqual(context.service.enqueueBulk(['one', 'two'], 100), true);
+    context.service.enqueueBulk(['one'], 100);
     context.service.start();
     context.tickMany(20);
 
+    assert(context.pausedGids.length >= 1);
+    assert(context.pausedGids.every(function (gid) { return gid === 'one'; }));
+    assert(context.changedOptions.length >= 1);
+    assert(context.changedOptions.every(function (change) {
+        return change.gid === 'one' && change.options['select-file'] === '2' &&
+            change.options['bt-remove-unselected-file'] === 'true';
+    }));
+    assert.strictEqual(context.service.getBulkStatus().filtered, 0);
+});
+
+test('does not report filtered when aria2 returns OK without applying select-file', function () {
+    const task = createActiveBtPayload('bulk', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({
+        tasks: {bulk: task},
+        taskOptions: {bulk: {'bt-remove-unselected-file': 'false'}},
+        applySuccessfulChanges: false,
+        deferChange: true
+    });
+
+    context.service.enqueueBulk(['bulk'], 100);
+    context.service.start();
+    context.tickMany(2);
+    context.resolveChange();
+
+    assert.strictEqual(context.service.getBulkStatus().filtered, 0);
+    assert.strictEqual(context.service.getBulkStatus().type, 'running');
+    assert.strictEqual(context.getSavedBulkProgresses()[0].current.stage, 'applying');
+});
+
+test('reports a directly converged bulk task only after a stable readback', function () {
+    const task = createActiveBtPayload('happy', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({
+        tasks: {happy: task},
+        taskOptions: {happy: {'bt-remove-unselected-file': 'false'}}
+    });
+
+    context.service.enqueueBulk(['happy'], 100);
+    context.service.start();
+
+    context.tick();
+    assert.deepStrictEqual(context.changedOptions, [{gid: 'happy', options: {
+        'select-file': '2', 'bt-remove-unselected-file': 'true'
+    }}]);
+    assert.strictEqual(context.service.getBulkStatus().filtered, 0);
+    context.tickMany(5);
+    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+    assert.strictEqual(context.service.getBulkStatus().filtered, 1);
+    assert.strictEqual(context.service.getBulkStatus().filteredFiles, 1);
     assert.deepStrictEqual(context.pausedGids, []);
     assert.deepStrictEqual(context.startedGids, []);
-    assert.deepStrictEqual(context.changedOptions, [
-        {gid: 'one', options: {'select-file': '2', 'bt-remove-unselected-file': 'true'}},
-        {gid: 'two', options: {'select-file': '2', 'bt-remove-unselected-file': 'true'}}
-    ]);
-    assert.deepStrictEqual(JSON.parse(JSON.stringify(context.getSavedBulkRuns())), []);
-    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
-    assert.strictEqual(context.service.getBulkStatus().filtered, 2);
-    assert.strictEqual(context.service.getBulkStatus().filteredFiles, 2);
-
-    context.timeouts[context.timeouts.length - 1].callback();
-    assert.strictEqual(context.service.getBulkStatus().visible, false);
-    assert.strictEqual(context.service.getBulkStatus().type, 'idle');
+    assert.strictEqual(task.status, 'active');
 });
 
 test('does not inspect the next bulk task while the current option change is unresolved', function () {
@@ -2994,8 +3039,8 @@ test('does not inspect the next bulk task while the current option change is unr
     assert.deepStrictEqual(context.changedOptions.map(function (item) { return item.gid; }), ['one']);
 
     context.resolveChange();
-    context.tick();
-    assert.deepStrictEqual(context.statusGids, ['one', 'two']);
+    context.tickMany(20);
+    assert(context.statusGids.indexOf('two') >= 0);
 });
 
 test('keeps the immutable bulk GID definition separate from the current checkpoint', function () {
@@ -3060,7 +3105,7 @@ test('reloads an applying bulk checkpoint and reconciles without a duplicate mut
         savedBulkProgresses: JSON.parse(JSON.stringify(first.getSavedBulkProgresses()))
     });
     restored.service.start();
-    restored.tick();
+    restored.tickMany(20);
 
     assert.deepStrictEqual(restored.changedOptions, []);
     assert.strictEqual(restored.service.getBulkStatus().type, 'complete');
@@ -3069,8 +3114,6 @@ test('reloads an applying bulk checkpoint and reconciles without a duplicate mut
 
 test('does not reapply a restored bulk checkpoint to an ineligible task', function () {
     const variants = [
-        {name: 'paused', apply: function (task) { task.status = 'paused'; }},
-        {name: 'waiting', apply: function (task) { task.status = 'waiting'; }},
         {name: 'seeding', apply: function (task) { task.seeder = true; }},
         {name: 'verifying', apply: function (task) { task.verifiedLength = '0'; }},
         {name: 'pending verification', apply: function (task) {
@@ -3105,13 +3148,14 @@ test('only restores a changed ineligible task from an applying checkpoint', func
         {index: '3', length: '300', selected: 'true'}
     ]);
     task.status = 'paused';
+    task.seeder = true;
     const context = loadFilterService(Object.assign({
         tasks: {task: task},
         taskOptions: {task: {'bt-remove-unselected-file': 'true'}}
     }, createApplyingBulkStorage('task')));
 
     context.service.start();
-    context.tick();
+    context.tickMany(30);
 
     assert.deepStrictEqual(context.changedOptions, [{gid: 'task', options: {
         'select-file': '1,2', 'bt-remove-unselected-file': 'false'
@@ -3289,26 +3333,25 @@ test('restores the exact original selection after three failed bulk changes', fu
         taskOptions: {partial: taskOptions},
         changeResponses: [
             {success: false}, {success: false}, {success: false}, {success: true}
-        ]
+        ],
+        onChange: function (callNumber, rpcOptions, changedTask, changedTaskOptions) {
+            if (callNumber === 3) {
+                changedTask.files[0].selected = 'false';
+                changedTask.files[1].selected = 'true';
+                changedTask.files[2].selected = 'true';
+                changedTaskOptions['bt-remove-unselected-file'] = 'true';
+            }
+        }
     });
     context.service.enqueueBulk(['partial'], 100);
     context.service.start();
-    context.tick();
-    context.tick();
-    context.tick();
-
-    task.files[0].selected = 'false';
-    task.files[1].selected = 'true';
-    task.files[2].selected = 'true';
-    taskOptions['bt-remove-unselected-file'] = 'true';
-    context.tick();
+    context.tickMany(100);
 
     assert.deepStrictEqual(context.changedOptions[3], {gid: 'partial', options: {
         'select-file': '1,2', 'bt-remove-unselected-file': 'false'
     }});
     assert.strictEqual(context.service.getBulkStatus().failed, 1);
-    assert.deepStrictEqual(context.pausedGids, []);
-    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(task.status, 'active');
 });
 
 test('stops rollback after three persisted attempts and continues the bulk run', function () {
@@ -3331,27 +3374,19 @@ test('stops rollback after three persisted attempts and continues the bulk run',
         changeResponses: [
             {success: false}, {success: false}, {success: false},
             {success: false}, {success: false}, {success: false}
-        ]
+        ],
+        onChange: function (callNumber, rpcOptions, changedTask, changedTaskOptions) {
+            if (callNumber === 3) {
+                changedTask.files[0].selected = 'false';
+                changedTask.files[1].selected = 'true';
+                changedTask.files[2].selected = 'true';
+                changedTaskOptions['bt-remove-unselected-file'] = 'true';
+            }
+        }
     });
     context.service.enqueueBulk(['first', 'second'], 100);
     context.service.start();
-    context.tick();
-    context.tick();
-    context.tick();
-
-    first.files[0].selected = 'false';
-    first.files[1].selected = 'true';
-    first.files[2].selected = 'true';
-    taskOptions.first['bt-remove-unselected-file'] = 'true';
-
-    context.tick();
-    assert.strictEqual(context.getSavedBulkProgresses()[0].current.restoreRetryCount, 1);
-    context.tick();
-    assert.strictEqual(context.getSavedBulkProgresses()[0].current.restoreRetryCount, 2);
-    context.tick();
-    assert.strictEqual(context.getSavedBulkProgresses()[0].current.restoreRetryCount, 3);
-    context.tick();
-    context.tickMany(4);
+    context.tickMany(250);
 
     assert.deepStrictEqual(context.changedOptions, [
         {gid: 'first', options: {'select-file': '2', 'bt-remove-unselected-file': 'false'}},
@@ -3382,7 +3417,7 @@ test('preserves the rollback retry limit across reload', function () {
     }, storage));
 
     context.service.start();
-    context.tick();
+    context.tickMany(30);
 
     assert.deepStrictEqual(context.changedOptions, []);
     assert.strictEqual(context.service.getBulkStatus().type, 'complete');
@@ -3429,7 +3464,7 @@ test('advances a bulk run after one automatic turn even when metadata keeps wait
     context.tick();
     assert.deepStrictEqual(context.statusGids, ['automatic']);
 
-    context.tickMany(6);
+    context.tickMany(30);
     assert.deepStrictEqual(context.changedOptions.map(function (item) { return item.gid; }), ['bulk']);
     assert.strictEqual(context.service.getBulkStatus().type, 'complete');
     assert(context.service.getJobs().some(function (job) {
@@ -3459,7 +3494,7 @@ test('ignores an old bulk status callback after stop and keeps the restarted tic
 
     context.resolveStatus();
     assert.deepStrictEqual(context.changedOptions.map(function (item) { return item.gid; }), ['bulk']);
-    assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+    assert.strictEqual(context.service.getBulkStatus().type, 'running');
 });
 
 test('does not continue a bulk RPC chain when stopped during option inspection', function () {
@@ -3495,7 +3530,7 @@ test('reconciles a stopped bulk option change without sending it twice after res
     context.resolveChange();
 
     context.service.start();
-    context.tick();
+    context.tickMany(20);
     assert.deepStrictEqual(context.changedOptions.map(function (item) { return item.gid; }), ['bulk']);
     assert.strictEqual(context.service.getBulkStatus().type, 'complete');
 });
@@ -3538,7 +3573,7 @@ test('does not announce bulk completion until the terminal checkpoint is durable
     context.service.enqueueBulk(['bulk'], 100);
     failureArmed = true;
     context.service.start();
-    context.tick();
+    context.tickMany(6);
 
     assert.strictEqual(context.service.getBulkStatus().type, 'running');
     assert.strictEqual(context.getSavedBulkProgresses().length, 1);
