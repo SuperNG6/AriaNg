@@ -197,6 +197,8 @@
                 restoreRetryCount: normalizeInteger(current.restoreRetryCount, 0),
                 pauseRetryCount: normalizeInteger(current.pauseRetryCount, 0),
                 pauseRequestedAt: normalizeInteger(current.pauseRequestedAt, 0),
+                pauseOwned: current.pauseOwned === true || current.stage === 'pausing' ||
+                    current.stage === 'resuming',
                 mutationRequestedAt: normalizeInteger(current.mutationRequestedAt, 0),
                 verifiedAt: normalizeInteger(current.verifiedAt, 0),
                 resumeRetryCount: normalizeInteger(current.resumeRetryCount, 0),
@@ -1557,9 +1559,16 @@
                 settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
                 return;
             }
+            var previousPauseRetryCount = current.pauseRetryCount;
+            var previousPauseRequestedAt = current.pauseRequestedAt;
+            var previousPauseOwned = current.pauseOwned;
             current.pauseRetryCount++;
             current.pauseRequestedAt = Date.now();
+            current.pauseOwned = true;
             if (!saveBulkProgresses()) {
+                current.pauseRetryCount = previousPauseRetryCount;
+                current.pauseRequestedAt = previousPauseRequestedAt;
+                current.pauseOwned = previousPauseOwned;
                 finishBulkTick(rpcIdentity);
                 return;
             }
@@ -1727,6 +1736,7 @@
             current.filteredFileCount = plan.filteredFileCount;
             current.pauseRetryCount = 0;
             current.pauseRequestedAt = 0;
+            current.pauseOwned = false;
             current.resumeRetryCount = 0;
             current.resumeOutcome = 'filtered';
             applyBulkOptions(definition, progress, task, rpcIdentity);
@@ -1779,7 +1789,7 @@
                         getOptionValue(options, 'bt-remove-unselected-file', 'false') === expectedCleanup) {
                         if (current.verifiedAt &&
                             Date.now() - current.verifiedAt >= bulkConvergenceDelay) {
-                            if (task.status === 'paused') {
+                            if (task.status === 'paused' && current.pauseOwned) {
                                 beginBulkResume(definition, progress, outcome, rpcIdentity);
                             } else {
                                 settleBulkCurrent(definition, progress, outcome, rpcIdentity);
@@ -1798,7 +1808,13 @@
                         if (Date.now() - current.mutationRequestedAt < bulkMutationRestartDelay) {
                             finishBulkTick(rpcIdentity);
                         } else if (task.status === 'paused') {
-                            beginBulkResume(definition, progress, outcome, rpcIdentity);
+                            if (current.pauseOwned) {
+                                beginBulkResume(definition, progress, outcome, rpcIdentity);
+                            } else if (outcome === 'filtered') {
+                                beginBulkRestoration(definition, progress, task, options, rpcIdentity);
+                            } else {
+                                restoreBulkOptions(definition, progress, task, options, rpcIdentity);
+                            }
                         } else {
                             beginBulkPause(definition, progress, outcome, rpcIdentity);
                         }
@@ -1909,6 +1925,7 @@
                     restoreRetryCount: 0,
                     pauseRetryCount: 0,
                     pauseRequestedAt: 0,
+                    pauseOwned: false,
                     mutationRequestedAt: 0,
                     verifiedAt: 0,
                     resumeRetryCount: 0,
@@ -2132,10 +2149,12 @@
                     inspecting: 'bulk-inspecting',
                     pausing: 'applying-filter',
                     applying: 'applying-filter',
-                    restoring: 'restoring-full',
-                    resuming: 'starting-filtered'
+                    restoring: 'restoring-full'
                 };
-                var stage = bulkStageMap[bulkProgress.current.stage];
+                var stage = bulkProgress.current.stage === 'resuming' ?
+                    (bulkProgress.current.resumeOutcome === 'filtered' ?
+                        'starting-filtered' : 'starting-full') :
+                    bulkStageMap[bulkProgress.current.stage];
                 if (stage) {
                     map[bulkProgress.current.gid] = stage;
                 }
