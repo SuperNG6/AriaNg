@@ -65,7 +65,7 @@
   },
   "name": "ariang",
   "description": "AriaNg, a modern web frontend making aria2 easier to use.",
-  "version": "2.1.2",
+  "version": "2.2.0",
   "main": "index.html",
   "scripts": {
     "test": "node test/task-list-file-list.test.js && node test/release-workflow.test.js && node test/aria2-websocket-rpc.test.js && node test/new-task-small-file-filter.test.js && node test/bt-filter-pending-badge.test.js && node test/i18n-contract.test.js",

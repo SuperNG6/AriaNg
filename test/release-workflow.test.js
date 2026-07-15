@@ -11,8 +11,10 @@ const workflow = fs.readFileSync(workflowPath, 'utf8');
 const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const packageLock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
 
-assert.strictEqual(packageJson.version, '2.1.2');
-assert.strictEqual(packageLock.version, '2.1.2');
+assert.strictEqual(packageJson.version, '2.2.0');
+assert.strictEqual(packageLock.version, '2.2.0');
+assert.strictEqual(packageLock.packages[''].version, '2.2.0');
+assert(fs.existsSync('docs/releases/' + packageJson.version + '.md'), 'release notes must exist for package version ' + packageJson.version);
 
 [
     'workflow_dispatch:',
@@ -46,14 +48,21 @@ const testIndex = workflow.indexOf('- name: Run tests');
 const validateIndex = workflow.indexOf('- name: Validate version and release state');
 const buildIndex = workflow.indexOf('- name: Build standard archive');
 const publishIndex = workflow.indexOf('- name: Publish existing tag');
+const workflowDispatchIndex = workflow.indexOf('workflow_dispatch:');
+const permissionsIndex = workflow.indexOf('\npermissions:');
 
 assert(installIndex >= 0 && testIndex > installIndex, 'tests must run after npm ci');
 assert(testIndex < validateIndex, 'tests must run before version and release validation');
 assert(testIndex < buildIndex, 'tests must run before builds');
 assert(testIndex < publishIndex, 'tests must run before publish');
+assert(workflowDispatchIndex >= 0, 'workflow_dispatch configuration block must exist');
+assert(permissionsIndex > workflowDispatchIndex, 'top-level permissions must follow workflow_dispatch configuration');
+
+const workflowDispatch = workflow.slice(workflowDispatchIndex, permissionsIndex);
 
 assert(/\^\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/.test(workflow), 'workflow must strictly validate unprefixed versions');
 assert(workflow.includes('github.event_name == \'workflow_dispatch\''), 'manual and tag release paths must be distinct');
+assert(workflowDispatch.includes("default: '2.2.0'"), 'manual release default must match version 2.2.0');
 assert(!workflow.includes('--clobber'), 'release assets must never be overwritten');
 assert(!workflow.includes('--draft'), 'release must not be a draft');
 assert(!workflow.includes('--prerelease'), 'release must not be a prerelease');
