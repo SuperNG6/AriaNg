@@ -141,6 +141,7 @@ test('getPendingGidStageMap excludes terminal jobs', function () {
         makeJob({rootGid: 'root-done-3', stage: 'completed-fallback', childGid: 'child-done-3'}),
         makeJob({rootGid: 'root-waiting', stage: 'waiting-files', childGid: 'child-waiting'})
     ]);
+    context.service.start();
 
     const map = context.service.getPendingGidStageMap();
 
@@ -160,6 +161,7 @@ test('getPendingGidStageMap scopes to the current RPC', function () {
         makeJob({rpcIdentity: rpcA, rootGid: 'root-a', stage: 'waiting-files'}),
         makeJob({rpcIdentity: rpcB, rootGid: 'root-b', stage: 'applying-filter'})
     ], rpcA);
+    context.service.start();
 
     const map = context.service.getPendingGidStageMap();
 
@@ -176,6 +178,7 @@ test('getPendingGidStageMap maps both childGid and rootGid when childGid is set'
     const context = loadBtFileFilterService([
         makeJob({rootGid: 'r1', childGid: 'c1', stage: 'applying-filter'})
     ]);
+    context.service.start();
 
     const map = context.service.getPendingGidStageMap();
 
@@ -187,6 +190,7 @@ test('getPendingGidStageMap maps only rootGid when childGid is empty', function 
     const context = loadBtFileFilterService([
         makeJob({rootGid: 'r2', childGid: '', stage: 'waiting-metadata'})
     ]);
+    context.service.start();
 
     const map = context.service.getPendingGidStageMap();
 
@@ -210,6 +214,7 @@ test('getPendingGidStageMap returns a fresh object on each call', function () {
     const context = loadBtFileFilterService([
         makeJob({rootGid: 'r3', childGid: 'c3', stage: 'waiting-files'})
     ]);
+    context.service.start();
 
     const first = context.service.getPendingGidStageMap();
     first['r3'] = 'mutated';
@@ -230,6 +235,7 @@ test('sanitizeJob rejects malformed jobs so getPendingGidStageMap never sees the
         null,
         {rpcIdentity: 'http|localhost|6800|jsonrpc', rootGid: 'bad', stage: 'evil-stage'} // evil stage -> rejected
     ]);
+    context.service.start();
 
     const map = context.service.getPendingGidStageMap();
 
@@ -239,7 +245,7 @@ test('sanitizeJob rejects malformed jobs so getPendingGidStageMap never sees the
 
 test('start registers a polling interval that stop cancels and resets status to idle', function () {
     const context = loadBtFileFilterService([
-        makeJob({rootGid: 'r-waiting', stage: 'waiting-files', childGid: 'c-waiting'})
+        makeJob({rootGid: 'gid1', stage: 'waiting-files', childGid: 'c-waiting'})
     ]);
 
     context.service.start();
@@ -248,6 +254,7 @@ test('start registers a polling interval that stop cancels and resets status to 
     assert.strictEqual(context.getIntervalsCancelled().length, 0);
     // a pending job makes the active status visible
     assert.strictEqual(context.service.getStatus().visible, true);
+    assert.strictEqual(context.service.getPendingGidStageMap()['gid1'], 'waiting-files');
 
     context.service.stop();
 
@@ -255,6 +262,7 @@ test('start registers a polling interval that stop cancels and resets status to 
     assert.strictEqual(context.getIntervalsCancelled()[0], created[0]);
     assert.strictEqual(context.service.getStatus().visible, false);
     assert.strictEqual(context.service.getStatus().type, 'idle');
+    assert.deepStrictEqual(Object.assign({}, context.service.getPendingGidStageMap()), {});
 });
 
 test('stop allows start to be re-invoked after an RPC disconnect', function () {
