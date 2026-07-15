@@ -61,9 +61,29 @@
             };
         };
 
+        var getBtFileAllocationLimit = function (filterIntent) {
+            if (!filterIntent || !filterIntent.enabled) {
+                return null;
+            }
+
+            var megabyte = 1024 * 1024;
+            var thresholdBytes = Number(filterIntent.thresholdBytes);
+            if (!isFinite(thresholdBytes) || thresholdBytes <= 0 || thresholdBytes % megabyte !== 0) {
+                return null;
+            }
+
+            var thresholdMb = thresholdBytes / megabyte;
+            if (thresholdMb < 1 || thresholdMb > 102400 || thresholdMb !== Math.floor(thresholdMb)) {
+                return null;
+            }
+
+            return thresholdMb + 'M';
+        };
+
         var getDownloadTasksByLinks = function (options, pauseOnAdded, filterIntent) {
             var urls = ariaNgCommonService.parseUrlsFromOriginInput($scope.context.urls);
             var tasks = [];
+            var fileAllocationLimit = getBtFileAllocationLimit(filterIntent);
 
             if (!options) {
                 options = angular.copy($scope.context.options);
@@ -83,6 +103,9 @@
                 if (filterIntent && filterIntent.enabled && ariaNgBtFileFilterService.isBtMetadataUrl(url)) {
                     task.options['pause-metadata'] = 'true';
                     task.options.pause = 'false';
+                    if (fileAllocationLimit) {
+                        task.options['no-file-allocation-limit'] = fileAllocationLimit;
+                    }
                     task.pauseOnAdded = false;
                     task.btFileFilterCandidate = true;
                     task.btFileFilterSourceType = /^magnet:/i.test(url) ? 'magnet' : 'remote-torrent';
@@ -105,8 +128,12 @@
             return aria2TaskService.newUriTasks(tasks, pauseOnAdded, responseCallback);
         };
 
-        var downloadByTorrent = function (pauseOnAdded, responseCallback) {
+        var downloadByTorrent = function (pauseOnAdded, filterIntent, responseCallback) {
             var options = angular.copy($scope.context.options);
+            var fileAllocationLimit = getBtFileAllocationLimit(filterIntent);
+            if (fileAllocationLimit) {
+                options['no-file-allocation-limit'] = fileAllocationLimit;
+            }
 
             var task = {
                 content: $scope.context.uploadFile.base64Content,
@@ -298,7 +325,8 @@
             if (submissionTaskType === 'urls') {
                 $rootScope.loadPromise = downloadByLinks(pauseOnAdded, filterIntent, responseCallback);
             } else if (submissionTaskType === 'torrent') {
-                $rootScope.loadPromise = downloadByTorrent(filterIntent.enabled ? true : pauseOnAdded, responseCallback);
+                $rootScope.loadPromise = downloadByTorrent(filterIntent.enabled ? true : pauseOnAdded,
+                    filterIntent, responseCallback);
             } else if (submissionTaskType === 'metalink') {
                 $rootScope.loadPromise = downloadByMetalink(pauseOnAdded, responseCallback);
             }
