@@ -1,5 +1,41 @@
 # SDD Progress
 
+## 2026-07-15 — AriaNg 2.2.0 release preparation
+
+Status: local release preparation and all planned release gates complete; not pushed, tagged, or published.
+
+Release preparation:
+
+- `b455b3e` aligned the six stale pending-badge fixtures with the coordinator lifecycle. The focused suite passes 10/10, including the contract that `stop()` clears the exposed map to `{}`.
+- `c0c24f8` completed the remaining nine locales. The English default and all ten locale files now each expose the same 36 BT-filter keys, and the strict release placeholder contract passes. This completes the development-stage English/Simplified Chinese policy across all languages for release.
+- `f6fab42` synchronized `package.json`, the lockfile top-level and root-package versions, the workflow default, the release test, and `docs/releases/2.2.0.md`. The release contract now also checks the lockfile root version, release-notes existence, and the scoped `workflow_dispatch` default.
+- The residual audit classified 78 regex-index hits in context and confirmed fork-owned release blockers: 0. The low-probability first-persistence and extreme-concurrency limits remain accepted; upstream dependency and deprecation work remains excluded, with no dependency changes.
+
+Fresh automated gates:
+
+- `npm test`: exit 0, covering 39 task-list cases, the release contract, 2 WebSocket cases, 126 BT/new-task cases, 10 pending-badge cases, and development i18n.
+- `npm run test:i18n-release`: pass for all ten locale files under the strict release contract.
+- `npx gulp lint`: pass.
+- `npx gulp clean build`: pass; standard build reported 1.29 MB gzipped.
+- `npx gulp clean build-bundle`: pass; bundle reported 776 kB gzipped and an approximately 2.3 MB All-In-One `index.html`.
+- `git diff --check` and final repository status: clean. Browserslist and `DEP0180` were the only excluded upstream warnings recorded.
+
+Browser acceptance:
+
+- Playwright CLI used Google Chrome 150; Safari/WebKit was not used. The source preview contained 67 external `scripts/...` application script elements, with no `js/aria-ng-*.min.js`. The All-In-One build contained no external script elements and 9 inline script elements.
+- Both source and bundle runs covered: ready at 2 tasks/2 files; risk-free pre-action copy; a three-line confirmation rendered with 2 `br` elements; threshold snapshot isolation; automatic/bulk priority; root and child showing the same-stage dual badge; badge clearing on stop and restoration after restart; the Files preference; disabled checkboxes of 5 downloading, 1 waiting, and 1 stopped task; route changes; 375 px light/dark layouts with zero overflow; and empty console errors.
+- Each run produced 10 PNG captures and 10 JPG review copies under `/private/tmp` only; none is committed. A viewer-only black-block artifact was ruled out through computed white DOM backgrounds, PNG pixel inspection, and JPG review, confirming it was not a product defect.
+
+Real aria2 final read-only review:
+
+- RPC was connected. At the time of the read, counts were 59 active, 1 waiting, and 94 stopped; the pending map was `{}`, DOM badges were empty, automatic and bulk status were idle, the Files preference was true, and console/page errors were empty.
+- The review called only `getGlobalStat`, `tellActive`, `tellWaiting`, `tellStopped`, `tellStatus`, and `getOption`. It performed no mutation and records no secret, personal endpoint, task identifier, or connection alias. Detaching did not close the user's Chrome session.
+
+Cleanup:
+
+- The release worktree was clean, Playwright CLI had no browser processes, and port 9000 had no listener. The user's Chrome on port 9222 was retained as requested; no process identifier or alias is recorded.
+- A complete branch diff review found only the planned test fixtures, locale completion, release metadata, and documentation. It included no `dist/` or other generated output, RPC-sensitive information, user untracked files, dependency updates, or new architecture.
+
 ## 2026-07-14 — Files/filter scoped review fixes
 
 Status: implementation and planned browser/real-aria2 verification complete; release gates remain deferred.
