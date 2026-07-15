@@ -68,7 +68,7 @@
   "version": "2.2.0",
   "main": "index.html",
   "scripts": {
-    "test": "node test/task-list-file-list.test.js && node test/release-workflow.test.js && node test/aria2-websocket-rpc.test.js && node test/new-task-small-file-filter.test.js && node test/bt-filter-pending-badge.test.js && node test/i18n-contract.test.js",
+    "test": "node test/task-list-file-list.test.js && node test/release-workflow.test.js && node test/aria2-websocket-rpc.test.js && node test/new-task-small-file-filter.test.js && node test/bt-filter-allocation-limit.test.js && node test/bt-filter-pending-badge.test.js && node test/i18n-contract.test.js",
     "test:i18n-release": "node test/i18n-contract.test.js --release",
     "build": "gulp clean build"
   },
