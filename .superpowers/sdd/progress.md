@@ -88,3 +88,17 @@ Verification:
 - Playwright real-Chrome acceptance against a connected aria2 instance: pass with 67 active rows, five eligible tasks, 32 small files, three single-line confirmation reminders, and no console, page, or request errors. The confirmation was cancelled; real tasks were not changed.
 - Independent review at that checkpoint found no remaining blocker; the later real mutation and scoped review supersede that conclusion.
 - `npm run test:i18n-release`: expected release blocker; non-Chinese locales do not yet contain `format.bt-file-filter.stage.bulk-inspecting` and frozen-copy placeholder updates.
+
+### 2026-09-17 — bulk ineligible-target pause ownership
+
+- Preserve user pauses while rolling back file choices; resume only owned pauses.
+- Added a failing-then-passing regression and reload/owned-pause coverage.
+- All tests and both builds passed. Real-backend smoke check passed; the specific
+  ineligible/pause transition remains mock-verified only.
+- Details: `docs/superpowers/plans/2026-09-17-bulk-ineligible-pause-ownership.md`.
+
+### 2026-09-17 — 2.2.1 release
+
+- Patch release scoped to pause ownership, redundant-code cleanup, and regressions.
+- Version, lockfile, workflow default, release tests, and release notes synchronized.
+- Release verification: `docs/superpowers/plans/2026-09-17-2.2.1-release.md`.

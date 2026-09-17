@@ -792,10 +792,6 @@
             return false;
         };
 
-        var isSuccessfulResponse = function (response) {
-            return responseHasSuccess(response);
-        };
-
         var sameIndexes = function (files, indexes) {
             var selected = [];
             for (var i = 0; i < files.length; i++) {
@@ -926,7 +922,7 @@
                     return;
                 }
 
-                if (isSuccessfulResponse(response)) {
+                if (responseHasSuccess(response)) {
                     completeJob(job, outcome, rpcIdentity);
                 } else if (isNotFoundResponse(response)) {
                     removeDeletedJob(job, rpcIdentity);
@@ -1127,18 +1123,12 @@
                     return;
                 }
 
-                if (isSuccessfulResponse(response)) {
-                    finishTick(rpcIdentity);
-                } else if (isNotFoundResponse(response)) {
+                if (isNotFoundResponse(response)) {
                     removeDeletedJob(job, rpcIdentity);
                 } else {
                     finishTick(rpcIdentity);
                 }
             }, true);
-        };
-
-        var settleAbsentMetadataChild = function (job, rpcIdentity, terminalStatus) {
-            removeDeletedJob(job, rpcIdentity);
         };
 
         var addRecoveryCandidate = function (map, key, gid) {
@@ -1234,7 +1224,7 @@
                     return;
                 }
 
-                finishTickAndRecoverActiveChild(job, rpcIdentity, terminalStatus,
+                recoverActiveChild(job, rpcIdentity, terminalStatus,
                     waitingCandidates.byInfoHash);
             }, true, ['gid', 'following', 'infoHash']);
         };
@@ -1323,18 +1313,13 @@
                 var counter = terminalStatus ? 'terminalChildScanCount' : 'missingRootScanCount';
                 job[counter] = normalizeInteger(job[counter], 0) + 1;
                 if (job[counter] >= missingRootScanLimit) {
-                    settleAbsentMetadataChild(job, rpcIdentity, terminalStatus);
+                    removeDeletedJob(job, rpcIdentity);
                     return;
                 }
                 touchAndSave(job);
 
                 finishTick(rpcIdentity);
             }, true, ['gid', 'following', 'infoHash']);
-        };
-
-        var finishTickAndRecoverActiveChild = function (job, rpcIdentity, terminalStatus,
-            waitingGidsByInfoHash) {
-            recoverActiveChild(job, rpcIdentity, terminalStatus, waitingGidsByInfoHash || {});
         };
 
         var processTaskResponse = function (job, response, rpcIdentity) {
@@ -1874,8 +1859,22 @@
                 return;
             }
             if (current.stage !== 'inspecting' && !isBtPayloadTask(task)) {
-                if (task.status === 'paused') {
+                if (task.status === 'paused' && current.pauseOwned) {
                     beginBulkResume(definition, progress, 'failed', rpcIdentity);
+                } else if (task.status === 'paused') {
+                    aria2TaskService.getTaskOptions(task.gid, function (optionsResponse) {
+                        if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
+                            finishBulkTick(rpcIdentity);
+                            return;
+                        }
+                        if (optionsResponse && optionsResponse.success) {
+                            restoreBulkOptions(definition, progress, task, optionsResponse.data || {}, rpcIdentity);
+                        } else if (isNotFoundResponse(optionsResponse)) {
+                            settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                        } else {
+                            finishBulkTick(rpcIdentity);
+                        }
+                    }, true);
                 } else {
                     settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
                 }

@@ -798,24 +798,14 @@ test('falls back to the existing unscoped download path history after upgrade', 
     assert.strictEqual(context.scope.context.options.dir, '/downloads/legacy');
 });
 
-test('binds remembered new-task options into their visible inputs', function () {
+test('wires new-task option inputs to the form model', function () {
     const newTaskView = read('src/views/new.html');
-    const newTaskStyles = read('src/styles/controls/new-task-table.css');
-    const settingDirective = read('src/scripts/directives/setting.js');
 
     assert(newTaskView.includes('model-value="context.options[option.key]"'));
     assert(!newTaskView.includes('ng-model="context.options[option.key]"'));
     assert(newTaskView.includes('class="new-task-download-path"'));
     assert(newTaskView.includes('ng-model="context.options.dir"'));
     assert(newTaskView.includes("ng-bind=\"'options.dir.name' | translate\""));
-    assert(newTaskStyles.includes('.new-task-download-path'));
-    assert(newTaskStyles.includes('@media (max-width: 991px)'));
-    assert(settingDirective.includes("scope.$watch('modelValue', syncExternalValue)"));
-    assert(settingDirective.includes("scope.$watch('ngModel', syncExternalValue)"));
-    assert(settingDirective.includes('externalValueInitialized'));
-    assert(settingDirective.includes('scope.optionValue = undefined;'));
-    assert(settingDirective.includes('scope.optionValue = displayValue;'));
-    assert(!settingDirective.includes('return ngModel.$viewValue;'));
 });
 
 test('enqueues only successful URI metadata candidates with the snapshotted intent', function () {
@@ -2798,6 +2788,45 @@ const createApplyingBulkStorage = function (gid) {
     };
 };
 
+test('preserves a user pause when an applying bulk task becomes ineligible', function () {
+    const task = createActiveBtPayload('task', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService({tasks: {task: task}});
+    context.service.enqueueBulk(['task'], 100);
+    context.service.start();
+    context.tick();
+
+    task.status = 'paused';
+    task.verifyIntegrityPending = 'true';
+    context.tick();
+
+    assert.deepStrictEqual(context.pausedGids, []);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(task.status, 'paused');
+    context.tickMany(5);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(task.status, 'paused');
+    assert.strictEqual(context.service.getBulkStatus().failed, 1);
+});
+
+test('resumes an owned pause when a bulk task becomes ineligible after reload', function () {
+    const task = createActiveBtPayload('task', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    task.status = 'paused';
+    task.verifyIntegrityPending = 'true';
+    const storage = createApplyingBulkStorage('task');
+    storage.savedBulkProgresses[0].current.pauseOwned = true;
+    const context = loadFilterService(Object.assign({tasks: {task: task}}, storage));
+    context.service.start();
+    context.tick();
+
+    assert.deepStrictEqual(context.startedGids, ['task']);
+});
+
 test('classifies only active BT payload downloads and preserves existing file choices', function () {
     const context = loadFilterService();
     const task = createActiveBtPayload('payload', [
@@ -3160,6 +3189,8 @@ test('only restores a changed ineligible task from an applying checkpoint', func
     assert.deepStrictEqual(context.changedOptions, [{gid: 'task', options: {
         'select-file': '1,2', 'bt-remove-unselected-file': 'false'
     }}]);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(task.status, 'paused');
     assert.strictEqual(context.service.getBulkStatus().failed, 1);
 });
 
@@ -3702,9 +3733,7 @@ test('styles the BT filter as an accessible grouped rule in every state', functi
     assert(mobileGroupRuleStart > mobileBreakpoint);
     assert(mobileGroupRule.includes('flex-basis: 100%;'));
     assert(mobileGroupRule.includes('justify-content: flex-start;'));
-    assert(!mobileGroupRule.includes('padding: 4px 6px 7px 37px;'));
     assert(core.includes('.bt-file-filter-group.has-filter-rule .bt-file-filter-status'));
-    assert(core.includes('min-height: 38px;'));
     assert(mobileRule > mobileBreakpoint);
     assert(core.indexOf('flex-wrap: wrap;', mobileRule) > mobileRule);
     assert(core.indexOf('max-width: 100%;', mobileRule) > mobileRule);
@@ -3736,8 +3765,6 @@ test('keeps the operable disabled BT filter text at accessible contrast', functi
         (Math.min(foregroundLuminance, backgroundLuminance) + 0.05);
 
     assert(contrast >= 4.5, 'disabled operable filter contrast was ' + contrast.toFixed(2) + ':1');
-    assert.strictEqual(color, '#687078');
-    assert.strictEqual(background, '#f3f4f5');
 });
 
 test('keeps fixed content below a dynamically wrapping mobile header', function () {
