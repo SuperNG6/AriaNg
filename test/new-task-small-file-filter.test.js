@@ -1202,6 +1202,8 @@ test('Download Later pauses a recovered active magnet child before filtering', f
         gid: 'child',
         options: {'select-file': '2', 'bt-remove-unselected-file': 'true'}
     }]);
+    assert.strictEqual(context.service.getStatus().filtered, 0);
+    context.tickUntilIdle();
     assert.strictEqual(context.getSavedQueue().length, 0);
     assert.strictEqual(context.service.getStatus().filtered, 1);
     assert.strictEqual(context.service.getStatus().full, 0);
@@ -1277,7 +1279,7 @@ test('silently removes a job when aggregate unpause reports a nested missing GID
 
     context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'});
     context.service.start();
-    context.tick();
+    context.tickUntilIdle();
 
     assert.deepStrictEqual(JSON.parse(JSON.stringify(context.getSavedQueue())), []);
     assert.strictEqual(context.service.getStatus().type, 'idle');
@@ -1587,6 +1589,7 @@ test('keeps a recovered Download Later remote-torrent child paused after filteri
         ]
     };
     const context = loadFilterService({
+        tasks: {child: child},
         waitingTasks: [child],
         statusResponseForGid: function (gid) {
             return gid === 'child' ? {success: true, data: child} : {
@@ -2215,7 +2218,7 @@ test('defers fallback notification while the current batch is still waiting', fu
     context.service.enqueue('waiting', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'magnet'});
     context.service.start();
 
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 20; i++) {
         context.tick();
     }
 
@@ -2250,7 +2253,7 @@ test('persists completed batch outcomes across reload until the last job settles
     first.service.enqueue('waiting', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'magnet'});
     first.service.start();
 
-    for (let i = 0; i < 10 && first.service.getStatus().fallback < 1; i++) {
+    for (let i = 0; i < 20 && first.service.getStatus().fallback < 1; i++) {
         first.tick();
     }
 
@@ -2658,6 +2661,8 @@ test('direct metadata child discovery waits for exactly one child before mutatin
     assert.deepStrictEqual(context.changedOptions, [{gid: 'child', options: {
         'select-file': '2', 'bt-remove-unselected-file': 'true'
     }}]);
+    assert.deepStrictEqual(context.startedGids, []);
+    context.tickUntilIdle();
     assert.deepStrictEqual(context.startedGids, ['child']);
     assert.strictEqual(context.service.getStatus().filtered, 1);
 });
@@ -2700,7 +2705,7 @@ test('restoration reconciliation preserves a present falsy cleanup value', funct
         ]}
     }, taskOptions: {'select-file': '1,2', 'bt-remove-unselected-file': ''}});
     context.service.start();
-    context.tick();
+    context.tickUntilIdle();
 
     assert.deepStrictEqual(context.changedOptions, []);
     assert.strictEqual(context.getSavedQueue().length, 0);
@@ -3776,6 +3781,129 @@ test('keeps fixed content below a dynamically wrapping mobile header', function 
     assert(fixScript.includes("css('padding-top', headerHeight)"));
     assert(fixScript.includes('window.ResizeObserver'));
     assert(!fixScript.includes('setInterval'));
+});
+
+test('automatic filtering waits for stable readback after OK and preserves its target across reload', function () {
+    const task = {gid: 'task', status: 'active', bittorrent: {}, files: [
+        {index: '1', length: '1', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]};
+    const options = {tasks: {task: task}, taskOptions: {'bt-remove-unselected-file': 'false'},
+        applySuccessfulChanges: false};
+    const context = loadFilterService(options);
+    context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'});
+    context.service.start();
+    context.tick();
+    assert.strictEqual(context.service.getStatus().filtered, 0);
+    assert.strictEqual(context.service.getJobs()[0].stage, 'applying-filter');
+    task.files[0].selected = 'false';
+    options.taskOptions['bt-remove-unselected-file'] = 'true';
+    const reloaded = loadFilterService(Object.assign({}, options, {
+        savedQueue: JSON.parse(JSON.stringify(context.getSavedQueue()))
+    }));
+    reloaded.service.start();
+    reloaded.tick();
+    assert.strictEqual(reloaded.service.getStatus().filtered, 0);
+    reloaded.tickMany(4);
+    assert.strictEqual(reloaded.service.getStatus().filtered, 1);
+    assert.strictEqual(reloaded.changedOptions.length, 0);
+});
+
+test('automatic InfoHash recovery retains original selection and cleanup while confirming a mutation', function () {
+    const task = {gid: 'task', status: 'active', bittorrent: {}, files: [
+        {index: '1', length: '1', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'},
+        {index: '3', length: '300', selected: 'false'}
+    ]};
+    const context = loadFilterService({tasks: {task: task}, savedQueue: [{
+        rpcIdentity: 'http|localhost|6800|jsonrpc', rootGid: 'root', childGid: 'task',
+        sourceType: 'magnet', thresholdBytes: 100, startAfterFilter: false,
+        stage: 'waiting-files', preserveExistingSelection: true
+    }], taskOptions: {'bt-remove-unselected-file': 'false'}});
+    context.service.start();
+    context.tick();
+    assert.strictEqual(context.service.getStatus().filtered, 0);
+    context.tickUntilIdle();
+    assert.strictEqual(context.service.getStatus().filtered, 1);
+    assert.strictEqual(task.files[2].selected, 'false');
+    assert.strictEqual(context.changedOptions.length, 1);
+    assert.strictEqual(context.changedOptions[0].options['bt-remove-unselected-file'], 'false');
+});
+
+test('automatic restoration waits for observed full selection after a successful response', function () {
+    const task = {gid: 'task', status: 'paused', bittorrent: {}, files: [
+        {index: '1', length: '1', selected: 'false'},
+        {index: '2', length: '2', selected: 'true'}
+    ]};
+    const options = {'bt-remove-unselected-file': 'false'};
+    const context = loadFilterService({tasks: {task: task}, taskOptions: options, applySuccessfulChanges: false});
+    context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: false, sourceType: 'torrent'});
+    context.service.start();
+    context.tick();
+    assert.strictEqual(context.service.getStatus().full, 0);
+    assert.strictEqual(context.service.getJobs()[0].stage, 'restoring-full');
+    task.files[0].selected = 'true';
+    context.tickUntilIdle();
+    assert.strictEqual(context.service.getStatus().full, 1);
+    assert.deepStrictEqual(context.startedGids, []);
+});
+
+test('automatic active recovery resumes its persisted restart pause and confirms the target', function () {
+    const task = {gid: 'task', status: 'active', bittorrent: {}, files: [
+        {index: '1', length: '1', selected: 'true'}, {index: '2', length: '200', selected: 'true'}
+    ]};
+    const options = {tasks: {task: task}, taskOptions: {'bt-remove-unselected-file': 'false'},
+        applySuccessfulChanges: false};
+    const first = loadFilterService(options);
+    first.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'});
+    first.service.start();
+    first.tickMany(5);
+    assert.deepStrictEqual(first.pausedGids, ['task']);
+    assert.strictEqual(task.status, 'paused');
+    assert.strictEqual(first.service.getStatus().filtered, 0);
+    const restored = loadFilterService(Object.assign({}, options, {
+        applySuccessfulChanges: true, savedQueue: JSON.parse(JSON.stringify(first.getSavedQueue()))
+    }));
+    restored.service.start();
+    restored.tickUntilIdle();
+    assert.deepStrictEqual(restored.startedGids, ['task']);
+    assert.strictEqual(task.status, 'active');
+    assert.strictEqual(restored.service.getStatus().filtered, 1);
+    assert.strictEqual(task.files[0].selected, 'false');
+});
+
+test('automatic OK without selection convergence falls back only after verified restoration', function () {
+    const task = {gid: 'task', status: 'active', bittorrent: {}, files: [
+        {index: '1', length: '1', selected: 'true'}, {index: '2', length: '200', selected: 'true'}
+    ]};
+    const context = loadFilterService({tasks: {task: task}, applySuccessfulChanges: false,
+        taskOptions: {'bt-remove-unselected-file': 'false'}});
+    context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'});
+    context.service.start();
+    context.tickUntilIdle();
+    assert.strictEqual(context.service.getStatus().filtered, 0);
+    assert.strictEqual(context.service.getStatus().fallback, 1);
+    assert.strictEqual(context.changedOptions.length, 4);
+    assert.strictEqual(task.status, 'active');
+    assert.strictEqual(task.files[0].selected, 'true');
+});
+
+test('automatic InfoHash confirmation preserves a user pause observed after mutation', function () {
+    const task = {gid: 'task', status: 'active', bittorrent: {}, files: [
+        {index: '1', length: '1', selected: 'true'}, {index: '2', length: '200', selected: 'true'}
+    ]};
+    const context = loadFilterService({tasks: {task: task}, savedQueue: [{
+        rpcIdentity: 'http|localhost|6800|jsonrpc', rootGid: 'root', childGid: 'task',
+        thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet',
+        stage: 'waiting-files', preserveExistingSelection: true
+    }], taskOptions: {'bt-remove-unselected-file': 'false'}});
+    context.service.start();
+    context.tick();
+    task.status = 'paused';
+    context.tickUntilIdle();
+    assert.strictEqual(context.service.getStatus().filtered, 1);
+    assert.strictEqual(task.status, 'paused');
+    assert.deepStrictEqual(context.startedGids, []);
 });
 
 let failed = 0;

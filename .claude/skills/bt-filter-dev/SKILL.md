@@ -5,9 +5,16 @@ description: Maintain or modify the AriaNg BT small-file filter (ariaNgBtFileFil
 
 # BT Small-File Filter — Maintenance Guide
 
-This skill governs changes to the BT small-file filter feature in AriaNg. The feature lives in `src/scripts/services/ariaNgBtFileFilterService.js` and surfaces in `src/scripts/controllers/{new,main,list}.js`, `src/views/list.html`, `src/index.html`, theme CSS, and the 10 language files + `src/scripts/config/defaultLanguage.js`.
+This skill governs changes to the BT small-file filter feature in AriaNg. The feature lives in `src/scripts/services/ariaNgBtFileFilterService.js` and surfaces in `src/scripts/controllers/{new,main,list}.js`, `src/views/list.html`, `src/index.html`, theme CSS, and the locale files + `src/scripts/config/defaultLanguage.js`.
 
-**Before writing any code** for the filter, read this whole file. Then read the `.superpowers/sdd/progress.md` gate log and the relevant `task-*-report.md`.
+## Read by task
+
+- State-machine, RPC, persistence, or scheduler changes: read sections 1–2 and the relevant section 5 pitfalls; section 3 covers callers.
+- Badge or controller lifecycle changes: read section 3 and the stop/restart, dual-GID, and controller-stub pitfalls in section 5.
+- Copy or translation changes: read section 4 and the Internationalization Contract in [AGENTS.md](../../../AGENTS.md).
+- Stuck-badge diagnosis: start with section 6, then follow the evidence to the relevant contract.
+
+Read only relevant sections; reuse material already read in this session if unchanged. Historical reports are optional sources for a specific decision or regression, not prerequisite reading. Missing historical reports do not block development. Repository verification and completion rules live in [AGENTS.md](../../../AGENTS.md).
 
 ## 1. aria2 contract (authoritative)
 
@@ -23,9 +30,9 @@ Source: https://aria2.github.io/manual/en/html/aria2c.html (Options + RPC Method
 
 ## 2. Stage state machine
 
-`allowedStages` (service L8-12): `waiting-metadata, waiting-files, applying-filter, restoring-full, starting-filtered, starting-full, starting-fallback, completed-filtered, completed-full, completed-fallback`.
+`allowedStages`: `waiting-metadata, waiting-files, applying-filter, restoring-full, starting-filtered, starting-full, starting-fallback, completed-filtered, completed-full, completed-fallback`.
 
-Transitions (`processTaskResponse`, L758+):
+Transitions (`processTaskResponse`):
 
 ```
 waiting-metadata  --root.followedBy len 1-->  waiting-files   (childGid adopted)
@@ -35,12 +42,14 @@ processBtTask:
   filter mode (mix large/small) --> applying-filter (set select-file + bt-remove-unselected-file=true) -> starting-* -> completed-filtered
   all-small (no file >= threshold) --> restoring-full -> completed-full
   all-large --> startOrComplete -> completed-full
-  changeTaskOptions failed 3x --> restoring-full (fallback) -> completed-fallback
+  changeTaskOptions unconfirmed after 3 attempts --> restoring-full (fallback) -> completed-fallback
 restoring-full --> reselect ALL files + restore original bt-remove-unselected-file -> startOrComplete
 completed-* = terminal (excluded from getCurrentJobs, from getPendingGidStageMap)
 ```
 
-Terminal predicate: `stage.indexOf('completed-') === 0`. Polling tick (L817) skips when no non-terminal job on the current RPC. Polling is 250 ms, one `getTaskStatus` per tick, round-robin.
+Terminal predicate: `stage.indexOf('completed-') === 0`. The automatic polling tick skips when no non-terminal job on the current RPC. Polling is 250 ms, one `getTaskStatus` per tick, round-robin.
+
+Automatic `applying-filter` and `restoring-full` also require a one-second stable status/options readback; an OK callback only releases the tick. Keep original and target indexes immutable after the first mutation, including InfoHash reuse. Persist mutation timing and restart/pause ownership across reloads, but establish a fresh stability window after reload. An unconverged active payload may need an owned pause/resume boundary. Preserve an observed user pause on reused tasks; new-task Download Now/Download Later intent still applies.
 
 Bulk filtering uses a separate persisted checkpoint:
 
@@ -54,7 +63,7 @@ failed target convergence -> restoring -> pausing/resuming when needed -> failed
 
 When automatic and bulk work coexist, the single-flight scheduler alternates one automatic RPC chain with one bulk RPC chain. A current bulk item stays persisted and pinned, but it must not monopolize every tick while waiting for convergence. The 250 ms `$interval` uses `invokeApply=false`; RPC callbacks provide the Angular async boundary for real UI changes, while an empty queue does not force four full-page digests per second.
 
-## 3. Public API (service return, ~L990)
+## 3. Public API (service return)
 
 - `isBtMetadataUrl(url)` — matches `magnet:?` and `https?://.../*.torrent` only. Plain HTTP/FTP never enters the filter.
 - `planFiles(files, thresholdBytes)` — splits files into selected/all index arrays + mode (`filter`/`all-small`/`all-large`).
@@ -64,18 +73,16 @@ When automatic and bulk work coexist, the single-flight scheduler alternates one
 - `getStatus()` — toolbar status object (mutated in place; bound by reference in MainController).
 - `start()` — idempotent (no-op if polling already running). `stop()` — cancels polling, resets `tickInProgress`/`pollCursor`, sets idle status.
 
-## 4. Required regression-test gate
+## 4. Select regression coverage
 
-After ANY change to the service, controllers, badge, or i18n, run and keep green:
+Use the verification matrix in [AGENTS.md](../../../AGENTS.md); this Skill adds scenario selection, not a second set of universal gates.
 
-- `npm test` (must include `test/bt-filter-pending-badge.test.js` and `test/new-task-small-file-filter.test.js`)
-- `npx gulp lint`
-- `npx gulp clean build` and `npx gulp clean build-bundle`
-- For UI changes: 375 px light **and** dark visual check of the task list with a filtering BT job visible.
+- Automatic filtering, recovery, selection, and bulk reconciliation: `test/new-task-small-file-filter.test.js`.
+- Pending badges and stopped-service visibility: `test/bt-filter-pending-badge.test.js`.
+- Controller integration and file-list refresh: `test/task-list-file-list.test.js`; update dependency stubs only in harnesses that load the changed controller.
+- BT copy: `node test/i18n-contract.test.js` checks English and Simplified Chinese during development. At release, translate frozen copy into every locale and run `npm run test:i18n-release`. Preserve all named placeholders; compare key sets, never a fixed key count.
 
-When adding/changing a translate key: it MUST land in `defaultLanguage.js` AND all 10 `src/langs/*.txt`, preserving `{{count}}/{{processed}}/{{total}}/{{filtered}}/{{full}}`. Verify counts match (currently 25 each): `grep -cE "format\.bt-file-filter|BT file filter|Exclude BT task|BT task pending file filter"` every source.
-
-When bumping the release version: update `package.json`, `package-lock.json`, the literal in `test/release-workflow.test.js`, the `workflow_dispatch` default in `.github/workflows/release.yml`, and create `docs/releases/$VERSION.md`.
+For visible filter changes, show the affected state (for example, an in-flight filtering job for badge changes). Include narrow light/dark layouts when layout or theme behavior is affected. RPC mocks or disposable test tasks can supply the state; personal live downloads are not a universal prerequisite. For RPC semantic changes, use an appropriate aria2 integration environment when available and report any remaining integration gap. Mutating real tasks must stay within current authorization, with original state recorded for restoration where applicable.
 
 ## 5. Pitfall ledger (do not reintroduce)
 
@@ -89,11 +96,11 @@ When bumping the release version: update `package.json`, `package-lock.json`, th
 - **Controller dependency stubs.** Adding a dependency to a controller requires adding a stub in every `test/*.test.js` that loads that controller (e.g. `ariaNgBtFileFilterService.getPendingGidStageMap` returns `{}` in `task-list-file-list.test.js`).
 - **No 0-based index "fix".** aria2 file indexes are 1-based; `normalizeIndexes` rejecting `<= 0` is correct.
 - **`pendingWholeInfoRequestId` must not block refreshing forever.** `DownloadListController` skips a refresh tick while a whole-info request is in flight so a basic refresh cannot overtake a pending file-detail request. But if that RPC response is never delivered (e.g. a WebSocket closed with auto-reconnect disabled, whose pending callback never fires), the guard would freeze every later refresh. The guard therefore expires a pending request older than `pendingWholeInfoTimeout` (30s) and also recovers on a backward wall-clock jump (`pendingElapsed >= 0`). Regression: `test/task-list-file-list.test.js` → "recovers refreshing when a pending file detail response is never delivered".
-- **Clean generated output before source-browser acceptance.** `gulp serve` serves `.tmp` before `src`. A stale `.tmp/index.html` created by a previous build references an old minified bundle and silently shadows current source scripts. Before real browser debugging after a build, stop the preview, run `npx gulp clean`, and restart `npx gulp serve`; confirm the page loads individual `scripts/...` resources rather than `js/aria-ng-*.min.js`.
+- **Check resource provenance when switching from a build to source preview.** `gulp serve` serves `.tmp` before `src`. A stale `.tmp/index.html` created by a previous build references an old minified bundle and silently shadows current source scripts. When switching back to source preview after a build, check that the page loads individual `scripts/...` resources rather than `js/aria-ng-*.min.js`. If stale output shadows source, stop the affected task-owned preview, run `npx gulp clean` (which also deletes `dist`), and restart `npx gulp serve`. Do not routinely restart unrelated user previews.
 
 ## 6. Diagnosis recipe for a stuck badge
 
-1. Reproduce: a BT/magnet task finished filtering and is downloading, but the row still shows 「过滤中」 and the toolbar still shows "正在等待 N 个 BT 任务的文件列表".
-2. Connect to aria2 RPC (`aria2.getGlobalStat` then `aria2.tellActive`/`tellWaiting` with `--compressed`). Confirm a task whose `following` points to a `complete` metadata root. The job's `rootGid` matches that root; the child is in active.
-3. The job is stuck because the recovery branch did not find the child in the queue it scanned. Confirm the new `recoverActiveChild` active-fallback exists and fires.
-4. Add/adjust a test in `test/new-task-small-file-filter.test.js` reproducing "root complete + child in active + waiting empty" before changing code.
+1. Capture the actual symptom, current RPC connection, coordinator running/stopped state, persisted stage, and exposed pending map. Distinguish a stuck job from a stale rendered badge.
+2. If the stage concerns metadata recovery, inspect root/child links and both `tellWaiting` and `tellActive`. A completed root with an active child and an empty waiting queue is one known failure case, not the assumed cause of every stuck badge.
+3. Follow the evidence: inspect stop/restart flag reset for a stopped coordinator, callback/timeout recovery for stale lists, or scheduler/convergence state for a running bulk job. Verify source-preview resource provenance if observed behavior differs from the current source.
+4. Reproduce the identified failure in the relevant suite before fixing it where feasible. For the active-child recovery case, use `test/new-task-small-file-filter.test.js` with root complete + child active + waiting empty. Verify the affected UI state after the fix when presentation is involved.

@@ -112,12 +112,3 @@ BT 小文件过滤的“过滤中”徽章也显示在任务行内，但其状�
 5. 浅色、深色和窄屏下文件面板可读且不溢出。
 
 先运行 `node test/task-list-file-list.test.js`，再按改动范围运行 `npm test`、`npx gulp lint` 与构建门禁。
-
-## 8. 历史资料
-
-以下资料用于追溯，不应覆盖本文的当前行为：
-
-- [三类任务列表页扩展设计](../superpowers/specs/2026-07-11-task-list-file-list-all-pages-design.md)
-- [下载页原始设计](../superpowers/specs/2026-07-11-downloading-file-list-design.md)
-- [视觉精修设计](../superpowers/specs/2026-07-11-downloading-file-list-visual-polish-design.md)
-- [性能调查与 5 秒节流依据](../../.superpowers/sdd/file-list-performance-report.md)

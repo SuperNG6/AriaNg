@@ -23,6 +23,15 @@
         var sessionSettings = {
             debugMode: false
         };
+        var currentRpcOptions = null;
+
+        // Connection edits are pending until reload, just like the RPC transports.
+        var getCurrentRpcOptions = function () {
+            if (!currentRpcOptions) {
+                currentRpcOptions = angular.extend({}, ariaNgDefaultOptions, getOptions());
+            }
+            return currentRpcOptions;
+        };
 
         var fireFirstVisitEvent = function () {
             if (!browserSupportStorage) {
@@ -481,7 +490,7 @@
                 return options.rpcHost + ':' + options.rpcPort;
             },
             getCurrentRpcUrl: function () {
-                var options = getOptions();
+                var options = getCurrentRpcOptions();
                 var protocol = options.protocol;
                 var rpcHost = options.rpcHost;
                 var rpcPort = options.rpcPort;
@@ -490,21 +499,21 @@
                 return protocol + '://' + rpcHost + ':' + rpcPort + '/' + rpcInterface;
             },
             getCurrentRpcHttpMethod: function () {
-                return getOption('httpMethod');
+                return getCurrentRpcOptions().httpMethod;
             },
             getCurrentRpcRequestHeaders: function () {
-                return getOption('rpcRequestHeaders');
+                return getCurrentRpcOptions().rpcRequestHeaders;
             },
             isCurrentRpcUseWebSocket: function (protocol) {
                 if (!protocol) {
-                    var options = getOptions();
+                    var options = getCurrentRpcOptions();
                     protocol = options.protocol;
                 }
 
                 return protocol === 'ws' || protocol === 'wss';
             },
             getCurrentRpcSecret: function () {
-                var value = getOption('secret');
+                var value = getCurrentRpcOptions().secret;
                 return (value ? ariaNgCommonService.base64Decode(value) : value);
             },
             addNewRpcSetting: function () {
@@ -731,7 +740,7 @@
                 setOption('btFileFilterMinSizeMb', parsedValue);
             },
             getCurrentRpcIdentity: function () {
-                var options = this.getAllOptions();
+                var options = getCurrentRpcOptions();
 
                 return [options.protocol, options.rpcHost, options.rpcPort, options.rpcInterface].join('|');
             },

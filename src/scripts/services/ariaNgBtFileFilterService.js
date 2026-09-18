@@ -106,6 +106,19 @@
             if (job.restoreAttempted) {
                 sanitized.restoreAttempted = true;
             }
+            if (job.mutationRequestedAt) {
+                sanitized.mutationRequestedAt = normalizeInteger(job.mutationRequestedAt, 0);
+            }
+            if (job.restartAttempted) {
+                sanitized.restartAttempted = true;
+            }
+            if (job.pauseOwned) {
+                sanitized.pauseOwned = true;
+            }
+            if (job.resumeRequested) {
+                sanitized.resumeRequested = true;
+            }
+            // A reload must establish a new stability window from fresh readbacks.
             if (job.preserveExistingSelection) {
                 sanitized.preserveExistingSelection = true;
             }
@@ -909,7 +922,7 @@
                 return;
             }
 
-            if (!job.startAfterFilter || task.status !== 'paused') {
+            if (!job.startAfterFilter || job.preserveExistingSelection || task.status !== 'paused') {
                 completeJob(job, outcome, rpcIdentity);
                 return;
             }
@@ -951,6 +964,43 @@
             startOrComplete(job, task, outcome, rpcIdentity);
         };
 
+        var hasStableAutomaticSelection = function (job, task, indexes, cleanup, options) {
+            if (!sameIndexes(task.files, indexes) ||
+                getOptionValue(options, 'bt-remove-unselected-file', 'false') !== cleanup) {
+                job.verifiedAt = 0;
+                return false;
+            }
+            if (!job.verifiedAt || Date.now() < job.verifiedAt) {
+                job.verifiedAt = Date.now();
+                return false;
+            }
+            return Date.now() - job.verifiedAt >= bulkConvergenceDelay;
+        };
+
+        var waitForAutomaticMutation = function (job, task, rpcIdentity) {
+            if (job.mutationRequestedAt > Date.now()) {
+                job.mutationRequestedAt = Date.now();
+            }
+            if (job.verifiedAt || (job.mutationRequestedAt &&
+                Date.now() - job.mutationRequestedAt < bulkMutationRestartDelay)) {
+                finishTick(rpcIdentity);
+                return true;
+            }
+            // An active payload may need a restart boundary, as with bulk filtering.
+            // Persist ownership before pausing, so reload can safely resume our pause.
+            if (job.mutationRequestedAt && task.status === 'active' && !job.restartAttempted) {
+                job.restartAttempted = true;
+                job.pauseOwned = true;
+                job.mutationRequestedAt = Date.now();
+                touchAndSave(job);
+                aria2TaskService.pauseTasks([task.gid], function () {
+                    finishTick(rpcIdentity);
+                }, true);
+                return true;
+            }
+            return false;
+        };
+
         var processRestoration = function (job, task, plan, rpcIdentity) {
             if (!isJobOnCurrentRpc(job, rpcIdentity)) {
                 finishTick(rpcIdentity);
@@ -979,13 +1029,17 @@
                 if (job.originalRemoveUnselectedFile === null || typeof job.originalRemoveUnselectedFile === 'undefined') {
                     job.originalRemoveUnselectedFile = getOptionValue(currentOptions, 'bt-remove-unselected-file', 'false');
                 }
-                if (job.restoreAttempted && sameIndexes(task.files, allIndexes) &&
-                    getOptionValue(currentOptions, 'bt-remove-unselected-file', 'false') === job.originalRemoveUnselectedFile) {
+                if (job.restoreAttempted && hasStableAutomaticSelection(job, task, allIndexes,
+                    job.originalRemoveUnselectedFile, currentOptions)) {
                     startOrComplete(job, task, outcome, rpcIdentity);
                     return;
                 }
 
+                if (waitForAutomaticMutation(job, task, rpcIdentity)) {
+                    return;
+                }
                 job.restoreAttempted = true;
+                job.mutationRequestedAt = Date.now();
                 touchAndSave(job);
                 aria2TaskService.changeTaskOptions(task.gid, {
                     'select-file': fullSelection,
@@ -996,9 +1050,7 @@
                         return;
                     }
 
-                    if (response && response.success) {
-                        startOrComplete(job, task, outcome, rpcIdentity);
-                    } else if (isNotFoundResponse(response)) {
+                    if (isNotFoundResponse(response)) {
                         removeDeletedJob(job, rpcIdentity);
                     } else {
                         finishTick(rpcIdentity);
@@ -1032,16 +1084,19 @@
                 if (job.originalRemoveUnselectedFile === null || typeof job.originalRemoveUnselectedFile === 'undefined') {
                     job.originalRemoveUnselectedFile = getOptionValue(currentOptions, 'bt-remove-unselected-file', 'false');
                 }
-                job.selectedIndexes = plan.selectedIndexes;
-                job.allIndexes = plan.allIndexes;
+                job.selectedIndexes = job.selectedIndexes || plan.selectedIndexes;
+                job.allIndexes = job.allIndexes || plan.allIndexes;
 
                 var targetRemoveUnselectedFile = job.preserveExistingSelection &&
                     plan.allIndexes.length < getRealFiles(task.files).length ?
                     job.originalRemoveUnselectedFile : 'true';
-                if (job.stage === 'applying-filter' && sameIndexes(task.files, plan.selectedIndexes) &&
-                    getOptionValue(currentOptions, 'bt-remove-unselected-file', 'false') ===
-                        targetRemoveUnselectedFile) {
+                if (job.stage === 'applying-filter' && hasStableAutomaticSelection(job, task,
+                    job.selectedIndexes, targetRemoveUnselectedFile, currentOptions)) {
                     startOrComplete(job, task, 'filtered', rpcIdentity);
+                    return;
+                }
+
+                if (waitForAutomaticMutation(job, task, rpcIdentity)) {
                     return;
                 }
 
@@ -1049,12 +1104,17 @@
                     job.stage = 'restoring-full';
                     job.restoreAttempted = false;
                     job.restorationOutcome = 'fallback';
+                    job.mutationRequestedAt = 0;
+                    job.restartAttempted = false;
+                    job.verifiedAt = 0;
                     touchAndSave(job);
                     processRestoration(job, task, plan, rpcIdentity);
                     return;
                 }
 
                 job.stage = 'applying-filter';
+                job.retryCount++;
+                job.mutationRequestedAt = Date.now();
                 touchAndSave(job);
                 aria2TaskService.changeTaskOptions(task.gid, {
                     'select-file': plan.selectedIndexes.join(','),
@@ -1065,13 +1125,13 @@
                         return;
                     }
 
-                    if (response && response.success) {
-                        startOrComplete(job, task, 'filtered', rpcIdentity);
-                    } else if (isNotFoundResponse(response)) {
+                    if (isNotFoundResponse(response)) {
                         removeDeletedJob(job, rpcIdentity);
                     } else {
-                        job.retryCount++;
-                        touchAndSave(job);
+                        if (!response || !response.success) {
+                            job.mutationRequestedAt = 0;
+                            touchAndSave(job);
+                        }
                         finishTick(rpcIdentity);
                     }
                 }, true);
@@ -1084,8 +1144,26 @@
                 return;
             }
 
+            if (job.pauseOwned && task.status === 'paused') {
+                job.resumeRequested = true;
+                job.verifiedAt = 0;
+                touchAndSave(job);
+                aria2TaskService.startTasks([task.gid], function () {
+                    finishTick(rpcIdentity);
+                }, true);
+                return;
+            }
+            if (job.pauseOwned && job.resumeRequested &&
+                (task.status === 'active' || task.status === 'waiting')) {
+                job.pauseOwned = false;
+                job.resumeRequested = false;
+                touchAndSave(job);
+            }
+
             var plan;
-            if (job.preserveExistingSelection) {
+            if (job.stage === 'applying-filter' && job.selectedIndexes && job.allIndexes) {
+                plan = {mode: 'filter', selectedIndexes: job.selectedIndexes, allIndexes: job.allIndexes};
+            } else if (job.preserveExistingSelection) {
                 var existingPlan = planExistingTaskFiles(task.files, job.thresholdBytes);
                 plan = {
                     mode: existingPlan.mode === 'filter' ? 'filter' : 'all-large',

@@ -9,7 +9,7 @@ const read = (path) => fs.readFileSync(path, 'utf8');
 const tests = [];
 const test = (name, fn) => tests.push({name, fn});
 
-const loadWebSocketRpcService = function (reconnectInterval) {
+const loadWebSocketRpcService = function (reconnectInterval, initialReadyState) {
     let factoryDefinition;
     const clients = [];
     const deferreds = [];
@@ -25,7 +25,7 @@ const loadWebSocketRpcService = function (reconnectInterval) {
         const client = {
             url: url,
             options: options,
-            readyState: 1,
+            readyState: initialReadyState === undefined ? 1 : initialReadyState,
             sent: [],
             reconnectCount: 0,
             onMessage: function (callback) {
@@ -192,6 +192,39 @@ test('keeps auto-reconnect pending requests for the existing reconnect path', fu
     assert.strictEqual(context.deferreds[0].rejectCount, 1);
     assert.strictEqual(errors.length, 1);
     assert.strictEqual(client.reconnectCount, 1);
+});
+
+test('sends connecting requests once on open and retains their response callback', function () {
+    const context = loadWebSocketRpcService(500, 0);
+    const errors = [];
+    let successes = 0;
+    const request = makeRequest('queued', errors);
+    request.successCallback = function () { successes++; };
+    context.service.request(request);
+    const client = context.clients[0];
+    assert.strictEqual(client.sent.length, 0);
+    client.readyState = 1;
+    client.openCallback({});
+    client.openCallback({});
+    assert.strictEqual(client.sent.length, 1);
+    client.messageCallback({data: JSON.stringify({id: 'queued', result: 'OK'})});
+    assert.strictEqual(successes, 1);
+    assert.strictEqual(errors.length, 0);
+});
+
+test('settles a synchronous socket send failure instead of leaking a pending request', function () {
+    const context = loadWebSocketRpcService(500);
+    const errors = [];
+    context.service.request(makeRequest('first', errors));
+    const client = context.clients[0];
+    client.send = function () { throw new Error('closed during send'); };
+    context.service.request(makeRequest('failed', errors));
+    assert.strictEqual(errors.length, 1);
+    assert.strictEqual(context.deferreds[1].rejectCount, 1);
+    client.messageCallback({data: JSON.stringify({id: 'first', result: 'OK'})});
+    client.triggerClose({code: 1006});
+    context.timeouts[0].callback();
+    assert.strictEqual(errors.length, 1);
 });
 
 let failed = 0;

@@ -56,18 +56,16 @@ BT 过滤相关界面文案在 Czech、Deutsch、Español、Français、Italiano
 - 原版每日构建(标准版):[https://github.com/mayswind/AriaNg-DailyBuild/archive/master.zip](https://github.com/mayswind/AriaNg-DailyBuild/archive/master.zip)
 
 #### 从源码构建
-前置:[Node.js](https://nodejs.org/)、[NPM](https://www.npmjs.com/)、[Gulp](https://gulpjs.com/)。
+推荐使用 Node.js 24（与 GitHub Actions 发布环境一致）及 npm；Gulp 由项目依赖提供，无需全局安装。首次安装或锁文件变化后安装依赖：`npm ci`。仓库仍保留使用 Node.js 14 / `npm install` 的旧 CircleCI 配置，其线上启用状态需另行确认。
 
 ##### 标准版
 ```bash
-npm install
-gulp clean build
+npm run build
 ```
 
 ##### All-In-One 版
 ```bash
-npm install
-gulp clean build-bundle
+npx gulp clean build-bundle
 ```
 
 构建产物输出到 `dist/` 目录。

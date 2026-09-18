@@ -6,7 +6,7 @@ AriaNg is an AngularJS 1.6 frontend built with Gulp. Application code lives in `
 
 ## Build, Test, and Development Commands
 
-- `npm ci` installs the exact locked dependencies used by CI.
+- `npm ci` installs locked dependencies; use it for initial setup or when the lockfile changes. GitHub Actions uses Node 24 and `npm ci`; the legacy CircleCI configuration uses Node 14 and `npm install` (its live status is not established by this repository).
 - `npm test` runs all Node assertion-based regression tests.
 - `npx gulp lint` checks JavaScript with ESLint.
 - `npm run build` cleans and creates the standard build in `dist/`.
@@ -16,11 +16,24 @@ AriaNg is an AngularJS 1.6 frontend built with Gulp. Application code lives in `
 
 ## Coding Style & Naming Conventions
 
-Follow `.editorconfig`: use spaces, LF line endings, a final newline, and no trailing whitespace. JavaScript, HTML, and CSS use four-space indentation; `package.json` uses two spaces. ESLint requires single-quoted JavaScript strings and semicolons. Follow existing AngularJS names such as `MainController`, `ariaNgSettingService`, and camelCase scope methods. Reuse existing translation keys where possible.
+Follow `.editorconfig`: use spaces, LF line endings, a final newline, and no trailing whitespace (Markdown retains the `.editorconfig` exception for intentional trailing spaces). JavaScript, HTML, and CSS use four-space indentation; `package.json` uses two spaces. ESLint requires single-quoted JavaScript strings and semicolons. Follow existing AngularJS names such as `MainController`, `ariaNgSettingService`, and camelCase scope methods. Reuse existing translation keys where possible.
 
-## Testing Guidelines
+## Verification by Change Risk
 
-Tests use Node’s `assert` module and lightweight VM stubs; no coverage threshold is configured. Name new files `test/<feature>.test.js` and add them to the `npm test` script. For behavior changes, first reproduce the regression, then verify the passing implementation. Before submitting UI or build changes, run `npm test`, `npx gulp lint`, and both build variants.
+Tests use Node's `assert` module and lightweight VM stubs. Add meaningful behavior regression tests to `test/<feature>.test.js` and register new suites in `npm test`; reproduce a bug before fixing it where feasible. Do not add implementation-mirroring tests for documentation, formatting, or other low-impact edits.
+
+| Change | Completion checks |
+| --- | --- |
+| Rules, documentation, comments only | Review content, references, and `git diff --check`; no application tests or builds. |
+| BT copy or translations | `node test/i18n-contract.test.js`; inspect affected UI when text length or meaning changes its presentation. |
+| Local JavaScript behavior | Focused regression tests while developing; `npm test` and lint at handoff. Build when packaging, injection, or minification may be affected. |
+| CSS, templates, UI interaction | Check affected states and representative shared layouts; standard build and relevant tests. Include 375px light/dark checks when mobile layout or themes are affected; check bundle output when asset loading or embedding is affected. |
+| BT state machine, RPC, recovery, persistence | Relevant failure-path regressions, `npm test`, both builds, and integration scenarios selected for the changed behavior. |
+| Build chain, dependencies, release | `npm test`, both builds, and affected artifact checks; releases also require `npm run test:i18n-release` and the release contract below. |
+
+Both `npx gulp clean build` and `npx gulp clean build-bundle` include lint, so a separate final lint run is unnecessary when building. Use `npx gulp lint` for early feedback or when no build is needed. Run the two clean/build variants sequentially because they share output directories. Expand verification for concrete dependency impact, failures, or unresolved risk, not simply because a file changed.
+
+Results remain valid for the tested source/configuration state. Documentation-only evidence updates and commits do not require repeating successful checks; recheck affected outputs if Git metadata changes embedded build information. Missing environments must be reported as unverified, not passed; complete independent work and try suitable local/mock verification before declaring a required check blocked.
 
 ## Commit & Pull Request Guidelines
 
@@ -28,18 +41,13 @@ Use focused Conventional Commit-style subjects seen in history: `feat:`, `fix:`,
 
 ## Security & Release Notes
 
-Never commit aria2 RPC secrets, personal endpoints, tokens, `node_modules/`, or generated `dist/` files. When preparing a release, keep the top-level versions in `package.json` and `package-lock.json` identical; the release workflow validates them before publishing.
+Never commit aria2 RPC secrets, personal endpoints, tokens, `node_modules/`, or generated `dist/` files. When preparing a release, synchronize `package.json`, both the top-level and root-package versions in `package-lock.json`, the current literals in `test/release-workflow.test.js`, and the `workflow_dispatch` default in `.github/workflows/release.yml`; create `docs/releases/$VERSION.md`. Keep release version, translation, archive integrity, and existing-tag protection checks.
 
 ## BT Small-File Filter Feature
 
-The BT small-file filter (`src/scripts/services/ariaNgBtFileFilterService.js`) is a persisted, retry-hardened state machine over aria2 tasks. Before changing it, read the dedicated maintenance skill: invoke `/bt-filter-dev` or read `.claude/skills/bt-filter-dev/SKILL.md`. It documents the stage state machine, the magnet dual-gid model against the official aria2 docs, and the regression-test gate list. Do not edit the service without first reading that guide.
+For BT state-machine, RPC, badge, or copy changes, use the task index in [.claude/skills/bt-filter-dev/SKILL.md](.claude/skills/bt-filter-dev/SKILL.md) and read the relevant sections before editing. Reuse already-read, unchanged material. Service changes require understanding the affected lifecycle and recovery invariants; copy-only edits do not require reading state-machine history.
 
-Authoritative fera facts that Claude would otherwise get wrong:
-
-- aria2 `select-file` indexes are **1-based**; `normalizeIndexes` correctly rejects `<= 0`. Do not "fix" this to 0-based.
-- `bt-remove-unselected-file` deletes unselected files **at download completion**, not when the option is set. The filter relies on this timing: `pause-metadata=true` keeps the child paused while the filter restores its file selection, so deletion is never raced under normal flow.
-- A magnet creates a metadata **root** task (`followedBy` lists children) plus a spawned BT **child** task (`following` points to the root, `belongsTo` is the parent link). The recovery path must scan **both** `tellWaiting` and `tellActive` for the child — a child may move straight to active. See the pitfall list below.
-- Polling is one `getTaskStatus` per 250 ms tick, round-robined by `pollCursor` across non-terminal jobs on the current RPC only. Terminal stages are `completed-*`.
+Preserve 1-based file indexes, completion-time deletion semantics, recovery across waiting and active children, pause ownership, and stop/restart behavior. The Skill maintains the detailed contracts and pitfall ledger in one place.
 
 ## Internationalization Contract
 
@@ -49,13 +57,10 @@ Authoritative fera facts that Claude would otherwise get wrong:
 - Before a release, translate the frozen copy in every `src/langs/*.txt` file and run `npm run test:i18n-release`; the release workflow blocks missing keys or placeholder drift.
 - Preserve every named placeholder (for example `{{count}}`, `{{files}}`, `{{threshold}}`, `{{processed}}`, `{{total}}`, `{{filtered}}`, `{{skipped}}`, `{{failed}}`, and `{{full}}`) verbatim in each required translation.
 
-## SDD Workflow
+## Completion and Cleanup
 
-Non-trivial work follows the spec-driven-development trail under `docs/superpowers/plans/` (plans), `docs/superpowers/specs/` (design specs), and `.superpowers/sdd/` (per-task briefs/reports + `progress.md` gate log). When a change touches the BT filter or release flow, add a dated plan/spec entry and update `.superpowers/sdd/progress.md`. Gates before merge: `npm test`, `npx gulp lint`, `npx gulp clean build` + `npx gulp clean build-bundle`, and a 375px light/dark visual check for UI changes.
+A task is complete when its agreed deliverable is implemented or reviewed, applicable checks are finished, and the handoff states the result and any remaining limitations. If a required check is blocked, distinguish completed implementation from incomplete acceptance and explain the concrete blocker. Continue authorized, independent work rather than stopping at a plan or partial result.
 
-## Pitfall Ledger (do not reintroduce)
+Carry forward current-session authorization. Ask only for information or authorization that is necessary and missing; do not repeatedly reconfirm routine reversible work. Commit, push, merge, and publish according to the current task's scope, not a historical checklist. A clean entire worktree or a new commit is not required for a local handoff; preserve unrelated user changes and isolate overlapping work where possible.
 
-- **Recovery only scans waiting**: `recoverMetadataChild` historically consulted only `tellWaiting`; a magnet child that moved to active was never found and the job stuck in `waiting-files` forever (badge + "waiting for file list" never cleared). `recoverActiveChild` now falls back to `tellActive` (`getTaskList('downloading')`). Any new recovery branch must consider active children, not just waiting.
-- **No service teardown**: `ariaNgBtFileFilterService` exposes `stop()` which cancels polling and resets status to idle; `MainController` calls it on RPC `Unauthorized` and `$destroy` **and** resets `btFileFilterStarted=false` so `start()` can re-arm after RPC recovery. Forgetting the flag reset leaves the filter permanently stopped after a transient disconnect.
-- **Hardcoded version in release test**: `test/release-workflow.test.js` asserts `package.json`/`package-lock.json` version equality against a literal. When bumping the release version, update that literal, the `workflow_dispatch` default in `.github/workflows/release.yml`, and create `docs/releases/$VERSION.md` together — the release workflow validates the notes file exists.
-- **Test dependency stubs must track new injections**: adding a dependency to a controller requires adding a stub for it in `test/*.test.js` harnesses (e.g. `ariaNgBtFileFilterService.getPendingGidStageMap` in `test/task-list-file-list.test.js`).
+Clean only temporary files and processes created for this task when no longer needed; retain previews requested by the user. Do not delete user files, sessions, branches, or worktrees to satisfy a generic cleanup gate. Keep durable design/evidence files separate from runtime state. `gulp clean` deletes both `.tmp` and `dist`, so account for any preview using them before cleaning.

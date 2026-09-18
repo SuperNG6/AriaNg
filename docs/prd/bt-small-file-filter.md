@@ -146,11 +146,6 @@ waiting-metadata
 
 功能开发阶段只同步 `src/scripts/config/defaultLanguage.js` 与 `src/langs/zh_Hans.txt`，`npm test` 检查两者的 BT 过滤键和全部命名占位符一致，不固定键数量。文案冻结、准备发版时再同步全部 `src/langs/*.txt`，并执行 `npm run test:i18n-release`；缺键或占位符漂移会阻止发版。
 
-## 10. 历史资料
+## 10. 维护资料
 
-- [原始产品设计](../superpowers/specs/2026-07-11-new-task-small-file-filter-design.md)
-- [最新最小修复设计](../superpowers/specs/2026-07-13-minimal-release-websocket-download-later-fixes-design.md)
-- [实施计划](../superpowers/plans/2026-07-11-new-task-small-file-filter.md)
 - [维护指南](../../.claude/skills/bt-filter-dev/SKILL.md)
-
-历史计划、审计报告和 `progress.md` 用于追溯决策；它们不是当前产品行为的唯一来源。

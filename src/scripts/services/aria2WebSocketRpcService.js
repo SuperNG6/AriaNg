@@ -13,6 +13,30 @@
         var sendIdStates = {};
         var eventCallbacks = {};
 
+        // Keep unsent requests here, not in angular-websocket's reconnect queue.
+        // Rejecting our callback must also prevent a later network mutation.
+        var sendRequest = function (state) {
+            if (!state || state.sent || !socketClient || socketClient.readyState !== websocketStatusOpen) {
+                return;
+            }
+            state.sent = true;
+            var requestBody = angular.toJson(state.context.requestBody);
+            try {
+                socketClient.send(requestBody);
+            } catch (error) {
+                processRequestFailed(requestBody);
+            }
+        };
+
+        var sendPendingRequests = function () {
+            for (var uniqueId in sendIdStates) {
+                if (!sendIdStates.hasOwnProperty(uniqueId)) {
+                    continue;
+                }
+                sendRequest(sendIdStates[uniqueId]);
+            }
+        };
+
         var rejectPendingRequests = function () {
             for (var uniqueId in sendIdStates) {
                 if (!sendIdStates.hasOwnProperty(uniqueId)) {
@@ -171,6 +195,7 @@
                     socketClient.onOpen(function (e) {
                         ariaNgLogService.debug('[aria2WebSocketRpcService.onOpen] websocket is opened', e);
                         socketClosedWithoutAutoReconnect = false;
+                        sendPendingRequests();
 
                         if (context && context.connectionSuccessCallback) {
                             context.connectionSuccessCallback({
@@ -271,7 +296,6 @@
                     connectionWaitingToReconnectCallback: context.connectionWaitingToReconnectCallback
                 });
                 var uniqueId = context.uniqueId;
-                var requestBody = angular.toJson(context.requestBody);
 
                 ariaNgLogService.debug('[aria2WebSocketRpcService.request] ' + (context && context.requestBody && context.requestBody.method ? context.requestBody.method + ' ' : '') + 'request start', context);
 
@@ -280,10 +304,11 @@
                 if (client.instance && !socketClosedWithoutAutoReconnect) {
                     sendIdStates[uniqueId] = {
                         context: context,
-                        deferred: deferred
+                        deferred: deferred,
+                        sent: false
                     };
 
-                    client.instance.send(requestBody);
+                    sendRequest(sendIdStates[uniqueId]);
                 } else {
                     deferred.reject({
                         success: false,

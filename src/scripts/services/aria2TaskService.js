@@ -327,7 +327,7 @@
             if (task.files) {
                 var selectedFileCount = 0;
                 var allDirectories = [];
-                var allDirectoryMap = {};
+                var allDirectoryMap = Object.create(null);
 
                 for (var i = 0; i < task.files.length; i++) {
                     var file = task.files[i];
@@ -675,34 +675,17 @@
                             return;
                         }
 
-                        if (response.data.length > 0) {
+                        if (Array.isArray(response.data) && Array.isArray(response.data[0])) {
                             task = response.data[0][0];
                         }
 
-                        if (response.data.length > 1) {
+                        if (Array.isArray(response.data) && Array.isArray(response.data[1])) {
                             options = response.data[1][0];
                         }
 
-                        if (!task || !options || !task.files || task.files.length !== 1 || task.bittorrent) {
-                            if (!task) {
-                                ariaNgLogService.warn('[aria2TaskService.retryTask] task is null');
-                            }
-
-                            if (!options) {
-                                ariaNgLogService.warn('[aria2TaskService.retryTask] options is null');
-                            }
-
-                            if (!task.files) {
-                                ariaNgLogService.warn('[aria2TaskService.retryTask] task file is null');
-                            }
-
-                            if (task.files.length !== 1) {
-                                ariaNgLogService.warn('[aria2TaskService.retryTask] task file length is not equal 1');
-                            }
-
-                            if (task.bittorrent) {
-                                ariaNgLogService.warn('[aria2TaskService.retryTask] task is bittorrent');
-                            }
+                        if (!task || !options || !Array.isArray(task.files) || task.files.length !== 1 ||
+                            !task.files[0] || !Array.isArray(task.files[0].uris) || task.bittorrent) {
+                            ariaNgLogService.warn('[aria2TaskService.retryTask] missing or unsupported task data');
 
                             deferred.reject(gid);
                             callback({
@@ -805,13 +788,18 @@
                         currentPromise = (function (task, index) {
                             return lastPromise.then(function onSuccess() {
                                 return doRetryFunc(task, index);
-                            }).catch(function onError() {
+                            }, function onError() {
                                 return doRetryFunc(task, index);
                             });
                         })(task, i);
                     }
 
                     lastPromise = currentPromise;
+                }
+
+                // Counts/callbacks report item failures; also consume the last rejection.
+                if (lastPromise) {
+                    lastPromise.catch(function () {});
                 }
 
                 return deferred.promise;
