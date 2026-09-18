@@ -292,6 +292,7 @@
                     return $q.resolve(result);
                 };
 
+                // 外部值先转换为输入框的显示单位；首次赋值延后一轮，后续更新直接同步。
                 var syncExternalValue = function (value) {
                     var displayValue = getHumanReadableValue(value);
 
@@ -307,6 +308,7 @@
                     scope.optionValue = displayValue;
                 };
 
+                // 独立 model-value 供父级选项对象主动回填，未使用它的旧调用仍监听 ngModel。
                 if (angular.isDefined(attrs.modelValue)) {
                     scope.$watch('modelValue', syncExternalValue);
                 } else if (ngModel) {

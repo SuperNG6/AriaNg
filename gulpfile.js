@@ -10,14 +10,15 @@ const saveLicense = require('uglify-save-license');
 const $ = gulpLoadPlugins();
 const reload = browserSync.reload;
 
+// 标准版与单文件版共用 .tmp 和 dist，clean 会删除两者；需要两份产物时顺序构建并先保存上一份。
 gulp.task('clean', () => del(['.tmp', 'dist']));
 
+// lint 必须真正执行 ESLint 并传播错误，使本地构建和 CI 同样失败；这里不修复或回写源文件。
 gulp.task('lint', () => gulp.src([
     'src/scripts/**/*.js'
-]).pipe(reload({stream: true, once: true}))
+]).pipe($.eslint())
     .pipe($.eslint.format())
-    .pipe($.if(!browserSync.active, $.eslint.failAfterError()))
-    .pipe(gulp.dest('src/scripts')));
+    .pipe($.eslint.failAfterError()));
 
 gulp.task('prepare-fonts', () => gulp.src([
     'node_modules/font-awesome/fonts/fontawesome-webfont.*',
@@ -86,6 +87,7 @@ gulp.task('prepare-assets-bundle', () => gulp.src([
     'src/favicon.png'
 ]).pipe(gulp.dest('.tmp')));
 
+// 单文件版内嵌脚本、样式、字体和语言资源；残留外部字体路径直接报错，防止离线使用时缺图标。
 gulp.task('process-assets-bundle', gulp.series('prepare-fonts', 'prepare-langs', 'prepare-html', 'prepare-assets-bundle', () => gulp.src('.tmp/index.html')
     .pipe($.replace(/<link rel="stylesheet" href="(css\/[a-zA-Z0-9\-_.]+\.css)">/g, (match, fileName) => {
         const content = fs.readFileSync('.tmp/' + fileName, 'utf8');
@@ -128,6 +130,7 @@ gulp.task('process-assets-bundle', gulp.series('prepare-fonts', 'prepare-langs',
                 const lastPointIndex = fileName.lastIndexOf('.');
                 const languageName = fileName.substr(0, lastPointIndex);
 
+                // 语言文本将嵌入 JavaScript 字符串，先转义反斜杠再转义换行和引号，避免改变翻译的原始内容。
                 content = content.replace(/\\/g, '\\\\');
                 content = content.replace(/\r/g, '');
                 content = content.replace(/\n/g, '\\n');

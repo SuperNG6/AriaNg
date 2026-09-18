@@ -439,6 +439,7 @@
 }
 
 /* task-table */
+/* 深色主题对应浅色主题的同组状态，只覆盖配色，保持共享布局与交互尺寸一致。 */
 .theme-dark.skin-aria-ng .bulk-bt-filter-rail {
     color: #eee;
     background-color: #1d2226;

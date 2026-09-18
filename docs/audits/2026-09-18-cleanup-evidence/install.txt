@@ -1,0 +1,57 @@
+npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: 'morris.js@0.5.0',
+npm warn EBADENGINE   required: { node: '>=0.8 <0.11' },
+npm warn EBADENGINE   current: { node: 'v22.21.1', npm: '10.9.4' }
+npm warn EBADENGINE }
+npm warn skipping integrity check for git dependency ssh://git@github.com/mayswind/angular-input-dropdown.git
+npm warn deprecated is-data-descriptor@0.1.4: Please upgrade to v0.1.5
+npm warn deprecated is-accessor-descriptor@0.1.6: Please upgrade to v0.1.7
+npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
+npm warn deprecated gulp-angular-templatecache@2.2.7: The original owners are no longer maintaining this package. It is usable in its current state but will not be updated. The package will be transferred responsibly to npm.
+npm warn deprecated is-data-descriptor@1.0.0: Please upgrade to v1.0.1
+npm warn deprecated is-accessor-descriptor@1.0.0: Please upgrade to v1.0.1
+npm warn deprecated is-data-descriptor@1.0.0: Please upgrade to v1.0.1
+npm warn deprecated is-data-descriptor@1.0.0: Please upgrade to v1.0.1
+npm warn deprecated is-accessor-descriptor@1.0.0: Please upgrade to v1.0.1
+npm warn deprecated is-accessor-descriptor@1.0.0: Please upgrade to v1.0.1
+npm warn deprecated is-data-descriptor@1.0.0: Please upgrade to v1.0.1
+npm warn deprecated is-accessor-descriptor@1.0.0: Please upgrade to v1.0.1
+npm warn deprecated source-map-url@0.4.1: See https://github.com/lydell/source-map-url#deprecated
+npm warn deprecated flatten@1.0.3: flatten is deprecated in favor of utility frameworks such as lodash.
+npm warn deprecated lodash.template@3.6.2: This package is deprecated. Use https://socket.dev/npm/package/eta instead.
+npm warn deprecated lodash.template@3.6.2: This package is deprecated. Use https://socket.dev/npm/package/eta instead.
+npm warn deprecated rimraf@2.6.3: Rimraf versions prior to v4 are no longer supported
+npm warn deprecated urix@0.1.0: Please see https://github.com/lydell/urix#deprecated
+npm warn deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported
+npm warn deprecated lodash.template@4.5.0: This package is deprecated. Use https://socket.dev/npm/package/eta instead.
+npm warn deprecated resolve-url@0.2.1: https://github.com/lydell/resolve-url#deprecated
+npm warn deprecated angular-cookies@1.6.10: For the actively supported Angular, see https://www.npmjs.com/package/@angular/core. AngularJS support has officially ended. For extended AngularJS support options, see https://goo.gle/angularjs-path-forward.
+npm warn deprecated browserslist@1.7.7: Browserslist 2 could fail on reading Browserslist >3.0 config used in other tools.
+npm warn deprecated browserslist@1.7.7: Browserslist 2 could fail on reading Browserslist >3.0 config used in other tools.
+npm warn deprecated browserslist@1.7.7: Browserslist 2 could fail on reading Browserslist >3.0 config used in other tools.
+npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated source-map-resolve@0.5.3: See https://github.com/lydell/source-map-resolve#deprecated
+npm warn deprecated angular-sanitize@1.6.10: For the actively supported Angular, see https://www.npmjs.com/package/@angular/core. AngularJS support has officially ended. For extended AngularJS support options, see https://goo.gle/angularjs-path-forward.
+npm warn deprecated circular-json@0.3.3: CircularJSON is in maintenance only, flatted is its successor.
+npm warn deprecated q@1.5.1: You or someone you depend on is using Q, the JavaScript Promise library that gave JavaScript developers strong feelings about promises. They can almost certainly migrate to the native JavaScript promise now. Thank you literally everyone for joining me in this bet against the odds. Be excellent to each other.
+npm warn deprecated
+npm warn deprecated (For a CapTP with native promises, see @endo/eventual-send and @endo/captp)
+npm warn deprecated angular-touch@1.6.10: For the actively supported Angular, see https://www.npmjs.com/package/@angular/core. AngularJS support has officially ended. For extended AngularJS support options, see https://goo.gle/angularjs-path-forward.
+npm warn deprecated angular-route@1.6.10: For the actively supported Angular, see https://www.npmjs.com/package/@angular/core. AngularJS support has officially ended. For extended AngularJS support options, see https://goo.gle/angularjs-path-forward.
+npm warn deprecated gulp-util@3.0.8: gulp-util is deprecated - replace it, following the guidelines at https://medium.com/gulpjs/gulp-util-ca3b1f9f9ac5
+npm warn deprecated fsevents@1.2.13: Upgrade to fsevents v2 to mitigate potential security issues
+npm warn deprecated querystring@0.2.0: The querystring API is considered Legacy. new code should use the URLSearchParams API instead.
+npm warn deprecated angular-animate@1.6.10: For the actively supported Angular, see https://www.npmjs.com/package/@angular/core. AngularJS support has officially ended. For extended AngularJS support options, see https://goo.gle/angularjs-path-forward.
+npm warn deprecated ua-parser-js@1.0.2: You are using an outdated version of ua-parser-js. Please update to ua-parser-js v0.7.33 / v1.0.33 / v2.0.0 (or later) to avoid ReDoS vulnerability [CVE-2022-25927](https://github.com/advisories/GHSA-fhg7-m89q-25r3)
+npm warn deprecated angular-translate@2.19.0: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
+npm warn deprecated bootstrap-colorpicker@2.5.3: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
+npm warn deprecated svgo@0.7.2: This SVGO version is no longer supported. Upgrade to v2.x.x.
+npm warn deprecated jvectormap@1.2.2: jvectormap is not maintened since Aug 2015. You can use jvectormap-next or jqvmap instead.
+npm warn deprecated angular@1.6.10: For the actively supported Angular, see https://www.npmjs.com/package/@angular/core. AngularJS support has officially ended. For extended AngularJS support options, see https://goo.gle/angularjs-path-forward.
+npm warn deprecated angular@1.8.3: For the actively supported Angular, see https://www.npmjs.com/package/@angular/core. AngularJS support has officially ended. For extended AngularJS support options, see https://goo.gle/angularjs-path-forward.
+npm warn deprecated jquery@3.4.1: This version is deprecated. Please upgrade to the latest version or find support at https://www.herodevs.com/support/jquery-nes.
+npm warn deprecated bootstrap@3.4.1: This version of Bootstrap is no longer supported. Please upgrade to the latest version.
+npm warn deprecated eslint@4.19.1: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+npm warn deprecated ckeditor@4.12.1: We have renamed the @ckeditor package. New versions are available under the @ckeditor4 name.
+
+added 1159 packages in 6s

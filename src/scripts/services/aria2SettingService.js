@@ -16,6 +16,7 @@
             return stat;
         };
 
+        // scope 用于隔离不同 RPC 的下载路径；省略时继续访问旧历史键，兼容已有设置调用。
         var getSettingHistoryKey = function (key, scope) {
             var storageKey = ariaNgConstants.settingHistoryKeyPrefix + '.' + key;
 

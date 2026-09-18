@@ -2,40 +2,12 @@
     'use strict';
 
     angular.module('ariaNg').controller('NewTaskController', ['$rootScope', '$scope', '$location', '$timeout', 'ariaNgCommonService', 'ariaNgLogService', 'ariaNgKeyboardService', 'ariaNgFileService', 'ariaNgSettingService', 'ariaNgBtFileFilterService', 'aria2TaskService', 'aria2SettingService', function ($rootScope, $scope, $location, $timeout, ariaNgCommonService, ariaNgLogService, ariaNgKeyboardService, ariaNgFileService, ariaNgSettingService, ariaNgBtFileFilterService, aria2TaskService, aria2SettingService) {
-        var tabStatusItems = [
-            {
-                name: 'links',
-                show: true
-            },
-            {
-                name: 'options',
-                show: true
-            }
-        ];
+        var tabItems = ['links', 'options'];
         var parameters = $location.search();
+        // 页面创建时绑定当前连接身份，异步提交期间编辑连接配置不能把路径历史写到另一服务器。
         var downloadPathHistoryScope = ariaNgSettingService.getCurrentRpcIdentity();
 
-        var getVisibleTabOrders = function () {
-            var items = [];
-
-            for (var i = 0; i < tabStatusItems.length; i++) {
-                if (tabStatusItems[i].show) {
-                    items.push(tabStatusItems[i].name);
-                }
-            }
-
-            return items;
-        };
-
-        var setTabItemShow = function (name, status) {
-            for (var i = 0; i < tabStatusItems.length; i++) {
-                if (tabStatusItems[i].name === name) {
-                    tabStatusItems[i].show = status;
-                    break;
-                }
-            }
-        };
-
+        // 同时维护旧的全局历史与按连接隔离的历史，兼容其他设置入口和旧版本数据。
         var saveDownloadPath = function (options) {
             if (!options || !options.dir) {
                 return;
@@ -61,6 +33,7 @@
             };
         };
 
+        // 每个 URL 使用独立选项副本；元数据必须先运行，pause-metadata 只让后续 BT 内容停下来等待过滤。
         var getDownloadTasksByLinks = function (options, pauseOnAdded, filterIntent) {
             var urls = ariaNgCommonService.parseUrlsFromOriginInput($scope.context.urls);
             var tasks = [];
@@ -168,7 +141,6 @@
         };
 
         $rootScope.swipeActions.extendLeftSwipe = function () {
-            var tabItems = getVisibleTabOrders();
             var tabIndex = tabItems.indexOf($scope.context.currentTab);
 
             if (tabIndex < tabItems.length - 1) {
@@ -180,7 +152,6 @@
         };
 
         $rootScope.swipeActions.extendRightSwipe = function () {
-            var tabItems = getVisibleTabOrders();
             var tabIndex = tabItems.indexOf($scope.context.currentTab);
 
             if (tabIndex > 0) {
@@ -245,6 +216,7 @@
         };
 
         $scope.startDownload = function (pauseOnAdded) {
+            // 捕获提交瞬间的类型、阈值和启动意图；用户在 RPC 返回前修改表单，不能改变已提交任务的处理方式。
             var requestedPauseOnAdded = !!pauseOnAdded;
             var filterIntent = angular.copy($scope.getBtFileFilterIntent());
             var submissionTaskType = $scope.context.taskType;

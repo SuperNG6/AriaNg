@@ -299,6 +299,7 @@
                     'verifyIntegrityPending'
                 ];
             },
+            // 文件视图需要 dir 计算相对路径；过滤恢复还依赖 infoHash 和 following，不能仅因列表不显示就删掉。
             getFullTaskParams: function () {
                 var requestParams = this.getBasicTaskParams();
 
@@ -314,7 +315,7 @@
                 return ariaNgSettingService.isCurrentRpcUseWebSocket();
             },
             reconnect: function (context) {
-                ariaNgLogService.info("[aria2RpcService.reconnect] reconnect now");
+                ariaNgLogService.info('[aria2RpcService.reconnect] reconnect now');
                 rpcImplementService.reconnect(buildRequestContext('', context));
             },
             addUri: function (context, returnContextOnly) {
@@ -332,6 +333,7 @@
                     contexts.push({
                         silent: !!context.silent,
                         task: task,
+                        // 逐项意图优先于批次默认值；false 也是有效覆盖，元数据任务需要先运行才能得到文件列表。
                         pauseOnAdded: angular.isDefined(task.pauseOnAdded) ? task.pauseOnAdded : context.pauseOnAdded
                     });
                 }

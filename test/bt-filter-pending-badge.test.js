@@ -1,3 +1,4 @@
+// 验证协调器阶段到任务徽标的映射，以及停止和恢复后旧徽标是否清除。
 'use strict';
 
 const assert = require('assert');

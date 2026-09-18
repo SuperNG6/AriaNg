@@ -25,7 +25,7 @@
         };
 
         $scope.shutdown = function () {
-            ariaNgCommonService.confirm('Confirm Shutdown', 'Are you sure you want to shutdown aria2?', 'warning', function (status) {
+            ariaNgCommonService.confirm('Confirm Shutdown', 'Are you sure you want to shutdown aria2?', 'warning', function () {
                 return aria2SettingService.shutdown(function (response) {
                     if (response.success && response.data === 'OK') {
                         ariaNgCommonService.showOperationSucceeded('Aria2 has been shutdown successfully.');
@@ -34,7 +34,8 @@
             }, true);
         };
 
-        $rootScope.$watch('taskContext.rpcStatus', function (value) {
+        // 监听绑定当前页面作用域，离开状态页后由 Angular 自动销毁，避免根作用域监听累积和重复请求。
+        $scope.$watch('taskContext.rpcStatus', function (value) {
             if (value === 'Connected') {
                 aria2SettingService.getAria2Status(function (response) {
                     if (response.success) {

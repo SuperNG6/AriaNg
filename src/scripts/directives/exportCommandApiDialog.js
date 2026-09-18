@@ -9,7 +9,7 @@
             scope: {
                 options: '='
             },
-            link: function (scope, element, attrs) {
+            link: function (scope, element) {
                 scope.context = {
                     trueFalseOptions: [{name: 'Enabled', value: true}, {name: 'Disabled', value: false}],
                     baseUrl: ariaNgCommonService.getFullPageUrl(),

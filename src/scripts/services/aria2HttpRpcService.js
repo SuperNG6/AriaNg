@@ -137,7 +137,7 @@
             reconnect: function () {
                 //Not implement
             },
-            on: function (eventName, callback) {
+            on: function () {
                 //Not implement
             }
         };

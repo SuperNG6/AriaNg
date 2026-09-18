@@ -268,7 +268,7 @@
             angular.element('#import-settings-modal').modal();
         };
 
-        $('#import-settings-modal').on('hide.bs.modal', function (e) {
+        $('#import-settings-modal').on('hide.bs.modal', function () {
             $scope.context.importSettings = null;
         });
 
@@ -315,7 +315,7 @@
             angular.element('#export-settings-modal').modal();
         };
 
-        $('#export-settings-modal').on('hide.bs.modal', function (e) {
+        $('#export-settings-modal').on('hide.bs.modal', function () {
             $scope.context.exportSettings = null;
             $scope.context.exportSettingsCopied = false;
         });
@@ -355,7 +355,7 @@
                 if (currentIndex >= $scope.context.rpcSettings.length) {
                     $scope.changeRpcTab($scope.context.rpcSettings.length - 1);
                 } else if (currentIndex <= 0 || currentIndex <= index) {
-                    ; // Do Nothing
+                    // Do Nothing
                 } else { // currentIndex > index
                     $scope.changeRpcTab(currentIndex - 1);
                 }

@@ -6,13 +6,16 @@
         var downloadTaskRefreshPromise = null;
         var pauseDownloadTaskRefresh = false;
         var needRequestWholeInfo = true;
+        // 模式代数拒绝切换视图前的回包；请求序号另行拒绝同一模式中乱序到达的旧结果。
         var downloadTaskModeGeneration = 0;
         var downloadTaskRequestId = 0;
         var latestAppliedDownloadTaskRequestId = 0;
+        // 文件结构较大，按 5 秒节流；普通进度仍按用户配置刷新，并复用已有文件行。
         var taskFileListRefreshInterval = 5000;
         var lastTaskFileListRequestTime = null;
         var pendingWholeInfoRequestId = null;
         var pendingWholeInfoRequestTime = null;
+        // 把全量请求绑定到批次完成编号，避免用过滤完成前发出的请求解除“正在分析”。
         var pendingWholeInfoCompletionId = null;
         var pendingWholeInfoTimeout = 30000;
         var bulkPreviewTimeoutPromise = null;
@@ -40,6 +43,7 @@
             return isFinite(value) && value >= 1 && value <= 102400 && value === Math.floor(value);
         };
 
+        // 只在数据或阈值变化时计算预览，模板读取缓存，避免每轮 digest 扫描所有文件。
         var updateBulkBtFilterPreview = function (tasks) {
             if (bulkPreviewTimeoutPromise) {
                 $timeout.cancel(bulkPreviewTimeoutPromise);
@@ -135,6 +139,7 @@
             }
         };
 
+        // 即使用户关闭周期刷新，批量完成也要获取新文件选择；请求超时后继续重试，不能依赖提示条存活。
         var scheduleBulkCompletionRefresh = function (delay) {
             needRequestWholeInfo = true;
             if (bulkCompletionRefreshTimeoutPromise) {
@@ -160,21 +165,13 @@
             }, typeof delay === 'number' ? delay : 0);
         };
 
+        // 空映射也必须遍历任务并清理旧字段，否则停止服务后旧徽标会残留。
         var decorateBtFilterStage = function (tasks) {
             var stageMap = ariaNgBtFileFilterService.getPendingGidStageMap();
-            var hasAny = false;
-
-            for (var key in stageMap) {
-                if (stageMap.hasOwnProperty(key)) {
-                    hasAny = true;
-                    break;
-                }
-            }
-
             for (var i = 0; tasks && i < tasks.length; i++) {
                 var task = tasks[i];
 
-                if (hasAny && stageMap.hasOwnProperty(task.gid)) {
+                if (stageMap.hasOwnProperty(task.gid)) {
                     task.btFilterStage = stageMap[task.gid];
                 } else if (task.btFilterStage) {
                     delete task.btFilterStage;
@@ -182,6 +179,7 @@
             }
         };
 
+        // 重建目录树前还原真实文件列表，避免把上轮生成的目录再次作为输入。
         var removeVirtualFileNodes = function (tasks) {
             for (var i = 0; tasks && i < tasks.length; i++) {
                 var task = tasks[i];
@@ -300,6 +298,7 @@
                     if ($rootScope.taskContext.list && $rootScope.taskContext.list.length > 0) {
                         for (var i = 0; i < $rootScope.taskContext.list.length; i++) {
                             var task = $rootScope.taskContext.list[i];
+                            // 校验结束时 RPC 会省略这些字段；合并前必须清除，否则旧的“正在校验”状态会一直保留。
                             delete task.verifiedLength;
                             delete task.verifyIntegrityPending;
                         }
@@ -307,7 +306,8 @@
 
                     aria2TaskService.processDownloadTasks(taskList, false);
 
-                    for (var i = 0; i < taskList.length; i++) {
+                    for (i = 0; i < taskList.length; i++) {
+                        // 增量数据缺少完整文件信息，保留全量响应计算的任务名，避免临时名称覆盖它。
                         delete taskList[i].taskName;
                         delete taskList[i].hasTaskName;
                     }
@@ -327,8 +327,8 @@
                     if (!isRequestWholeInfo) {
                         var hasFullStruct = false;
 
-                        for (var i = 0; i < $rootScope.taskContext.list.length; i++) {
-                            var task = $rootScope.taskContext.list[i];
+                        for (i = 0; i < $rootScope.taskContext.list.length; i++) {
+                            task = $rootScope.taskContext.list[i];
 
                             if (task.hasTaskName || task.files || task.bittorrent) {
                                 hasFullStruct = true;
@@ -436,7 +436,7 @@
             }
         });
 
-        $scope.$on('task-list.drop-model', function (el, target, source) {
+        $scope.$on('task-list.drop-model', function (el, target) {
             var element = angular.element(target);
             var gid = element.attr('data-gid');
             var index = element.index();
@@ -483,6 +483,7 @@
             scheduleBulkCompletionRefresh();
         }
 
+        // 路由离开时同时阻止迟到回包写入共享列表，并取消本控制器拥有的定时器和监听。
         $scope.$on('$destroy', function () {
             pauseDownloadTaskRefresh = true;
 
@@ -518,7 +519,7 @@
             });
 
             return false;
-        }
+        };
 
         $rootScope.loadPromise = refreshDownloadTask(false);
     }]);

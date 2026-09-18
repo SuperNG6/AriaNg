@@ -2,6 +2,7 @@
     'use strict';
 
     //copy from AdminLTE app.js
+    // 工具栏换行可能超出 AdminLTE 的固定头部高度，内容偏移必须覆盖其实际可见底边。
     var getHeaderHeight = function () {
         var header = $('.main-header');
         var headerHeight = header.outerHeight() || 0;
@@ -35,6 +36,7 @@
     var footer = document.querySelector('.main-footer');
     var toolbar = document.querySelector('.main-header .navbar-toolbar > .navbar-nav');
 
+    // 状态文案和工具栏换行也会改变高度，不能只监听窗口 resize；旧浏览器用 DOM 变化通知补足。
     if (window.ResizeObserver) {
         var resizeObserver = new ResizeObserver(fixContentWrapperHeight);
         if (header) {

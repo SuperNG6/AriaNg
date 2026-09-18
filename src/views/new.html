@@ -36,6 +36,7 @@
                     </div><div class="new-task-download-path" ng-if="context.currentTab === 'links'">
                         <label for="new-task-download-path"
                                ng-bind="'options.dir.name' | translate">Download Path</label>
+                        <!-- 与选项页共享 context.options.dir；全局默认目录仅作占位提示，不应直接覆盖用户输入。 -->
                         <input id="new-task-download-path" class="form-control input-sm" type="text"
                                ng-model="context.options.dir"
                                placeholder="{{'options.dir.name' | translate}}"/>

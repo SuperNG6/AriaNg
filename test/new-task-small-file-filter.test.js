@@ -1,3 +1,4 @@
+// 用可控时钟、RPC 回调和任务状态模拟恢复路径；请求被接受与服务器状态收敛必须分别模拟，避免假成功。
 'use strict';
 
 const assert = require('assert');
@@ -543,6 +544,7 @@ const loadNewTaskController = function (options) {
     options = options || {};
     let controllerDefinition;
     const uriTasks = [];
+    let globalOptionCalls = 0;
     const torrentCalls = [];
     const metalinkCalls = [];
     const enqueued = [];
@@ -626,6 +628,11 @@ const loadNewTaskController = function (options) {
         'ariaNgBtFileFilterService': filterService,
         'aria2TaskService': taskService,
         'aria2SettingService': {
+            getGlobalOption: function (callback) {
+                globalOptionCalls++;
+                callback({success: true, data: {dir: '/downloads'}});
+                return 'global-options-promise';
+            },
             getNewTaskOptionKeys: function () { return []; },
             getSpecifiedOptions: function () { return {}; },
             getSettingHistory: function (key, scope) {
@@ -659,6 +666,8 @@ const loadNewTaskController = function (options) {
 
     return {
         scope: scope,
+        swipeActions: rootScope.swipeActions,
+        getGlobalOptionCalls: function () { return globalOptionCalls; },
         uriTasks: uriTasks,
         torrentCalls: torrentCalls,
         metalinkCalls: metalinkCalls,
@@ -750,6 +759,21 @@ const loadMainController = function (options) {
         broadcasts: broadcasts
     };
 };
+
+test('swipes fixed new-task tabs with boundaries and loads options only when needed', function () {
+    const context = loadNewTaskController();
+    assert.strictEqual(context.swipeActions.extendRightSwipe(), false);
+    assert.strictEqual(context.getGlobalOptionCalls(), 0);
+    assert.strictEqual(context.swipeActions.extendLeftSwipe(), true);
+    assert.strictEqual(context.scope.context.currentTab, 'options');
+    assert.strictEqual(context.scope.context.globalOptions.dir, '/downloads');
+    assert.strictEqual(context.getGlobalOptionCalls(), 1);
+    assert.strictEqual(context.swipeActions.extendLeftSwipe(), false);
+    assert.strictEqual(context.swipeActions.extendRightSwipe(), true);
+    assert.strictEqual(context.scope.context.currentTab, 'links');
+    assert.strictEqual(context.swipeActions.extendLeftSwipe(), true);
+    assert.strictEqual(context.getGlobalOptionCalls(), 1);
+});
 
 test('adds magnets for metadata discovery while preserving Download Later for ordinary URLs', function () {
     const context = loadNewTaskController({
@@ -3506,6 +3530,42 @@ test('advances a bulk run after one automatic turn even when metadata keeps wait
     assert(context.service.getJobs().some(function (job) {
         return job.rootGid === 'automatic' && job.stage === 'waiting-metadata';
     }));
+});
+
+['pause', 'resume'].forEach(function (action) {
+    test('an old bulk ' + action + ' callback cannot release the restarted operation', function () {
+        const task = createActiveBtPayload('bulk', [
+            {index: '1', length: '20', selected: 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]);
+        const storage = createApplyingBulkStorage('bulk');
+        if (action === 'resume') {
+            task.status = 'paused';
+            storage.savedBulkProgresses[0].current.stage = 'resuming';
+        }
+        const context = loadFilterService(Object.assign(storage, {
+            tasks: {bulk: task}, deferStatus: true, deferPause: true, deferStart: true
+        }));
+        context.service.start();
+        context.tick();
+        context.resolveStatus();
+        assert.strictEqual(action === 'pause' ? context.pausedGids.length : context.startedGids.length, 1);
+        context.service.stop();
+        context.service.start();
+        context.tick();
+        const writes = context.storageSets.length;
+        if (action === 'pause') {
+            context.resolvePause();
+        } else {
+            context.resolveStart();
+        }
+        context.tick();
+        assert.deepStrictEqual(context.statusGids, ['bulk', 'bulk']);
+        assert.strictEqual(context.storageSets.length, writes);
+        assert.strictEqual(context.changedOptions.length, 0);
+        context.resolveStatus();
+        assert.strictEqual(context.service.getBulkStatus().type, 'running');
+    });
 });
 
 test('ignores an old bulk status callback after stop and keeps the restarted tick locked', function () {

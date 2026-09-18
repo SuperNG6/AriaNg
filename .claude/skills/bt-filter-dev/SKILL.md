@@ -71,7 +71,7 @@ When automatic and bulk work coexist, the single-flight scheduler alternates one
 - `getJobs()` — sanitized copy of persisted jobs (do NOT mutate jobs indirectly).
 - `getPendingGidStageMap()` — `{gid: stage}` for non-terminal current-RPC jobs while the coordinator is running, mapping **both** `rootGid` and `childGid` (so the metadata-root row and the child row both show the badge). It returns `{}` after `stop()` so the stop broadcast clears rendered badges immediately. Consumed by `DownloadListController.decorateBtFilterStage` on every list refresh.
 - `getStatus()` — toolbar status object (mutated in place; bound by reference in MainController).
-- `start()` — idempotent (no-op if polling already running). `stop()` — cancels polling, resets `tickInProgress`/`pollCursor`, sets idle status.
+- `start()` — idempotent (no-op if polling already running). `stop()` — cancels polling, clears `activeOperation` and resets `pollCursor`, sets idle status.
 
 ## 4. Select regression coverage
 

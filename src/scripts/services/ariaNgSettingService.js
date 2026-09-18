@@ -25,7 +25,7 @@
         };
         var currentRpcOptions = null;
 
-        // Connection edits are pending until reload, just like the RPC transports.
+        // 实际连接使用首次读取时的配置快照；待重载的设置编辑不能提前改变请求地址或恢复队列身份。
         var getCurrentRpcOptions = function () {
             if (!currentRpcOptions) {
                 currentRpcOptions = angular.extend({}, ariaNgDefaultOptions, getOptions());
@@ -91,7 +91,7 @@
                 return ariaNgDefaultOptions.language;
             }
 
-            browserLang = browserLang.replace(/\-/g, '_');
+            browserLang = browserLang.replace(/-/g, '_');
 
             if (!ariaNgLanguages[browserLang]) {
                 var languageName = getLanguageNameFromAlias(browserLang);
@@ -106,7 +106,7 @@
                 browserLang = langParts[0] + '_' + langParts[1];
 
                 if (!ariaNgLanguages[browserLang]) {
-                    var languageName = getLanguageNameFromAlias(browserLang);
+                    languageName = getLanguageNameFromAlias(browserLang);
 
                     if (languageName) {
                         browserLang = languageName;
@@ -115,7 +115,7 @@
 
                 if (!ariaNgLanguages[browserLang]) {
                     browserLang = langParts[0];
-                    var languageName = getLanguageNameFromAlias(browserLang);
+                    languageName = getLanguageNameFromAlias(browserLang);
 
                     if (languageName) {
                         browserLang = languageName;
@@ -124,11 +124,11 @@
             }
 
             if (!ariaNgLanguages[browserLang]) {
-                ariaNgLogService.info('[ariaNgSettingService] browser language \"' + browserLang + '\" not support, use default language');
+                ariaNgLogService.info('[ariaNgSettingService] browser language "' + browserLang + '" not support, use default language');
                 return ariaNgDefaultOptions.language;
             }
 
-            ariaNgLogService.info('[ariaNgSettingService] use browser language \"' + browserLang + '\" as current language');
+            ariaNgLogService.info('[ariaNgSettingService] use browser language "' + browserLang + '" as current language');
             return browserLang;
         };
 
@@ -318,7 +318,7 @@
                         var rpcSetting = options.extendRpcServers[i];
                         var finalRpcSetting = createNewRpcSetting();
 
-                        for (var key in rpcSetting) {
+                        for (key in rpcSetting) {
                             if (!rpcSetting.hasOwnProperty(key) || !finalRpcSetting.hasOwnProperty(key)) {
                                 continue;
                             }
@@ -706,6 +706,7 @@
                 var optionKey = this.getTaskListDisplayOrderKey(taskListPageType);
                 setOption(optionKey, value);
             },
+            // 仅在新设置缺失时迁移旧的下载中页面偏好，显式 false 必须保留。
             getShowFileListInTaskListPage: function () {
                 var options = getOptions();
 
@@ -739,6 +740,7 @@
 
                 setOption('btFileFilterMinSizeMb', parsedValue);
             },
+            // 用实际连接参数隔离恢复队列，不把 RPC 密钥写入身份或持久化队列。
             getCurrentRpcIdentity: function () {
                 var options = getCurrentRpcOptions();
 

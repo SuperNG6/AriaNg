@@ -15,6 +15,7 @@
 
         // Keep unsent requests here, not in angular-websocket's reconnect queue.
         // Rejecting our callback must also prevent a later network mutation.
+        // 只向已打开的 socket 发送，避免底层库把请求暗中排队，在上层已报告失败后重连重放写操作。
         var sendRequest = function (state) {
             if (!state || state.sent || !socketClient || socketClient.readyState !== websocketStatusOpen) {
                 return;
@@ -37,6 +38,7 @@
             }
         };
 
+        // 先移除请求再通知调用者，迟到响应不再重复结算；这并不撤销服务器已收到的写操作。
         var rejectPendingRequests = function () {
             for (var uniqueId in sendIdStates) {
                 if (!sendIdStates.hasOwnProperty(uniqueId)) {
@@ -231,7 +233,7 @@
                         success: false,
                         error: 'Cannot initialize WebSocket!',
                         exception: ex
-                    }
+                    };
                 }
             }
 
@@ -280,8 +282,8 @@
                 pendingReconnect = null;
             }, ariaNgSettingService.getWebSocketReconnectInterval());
 
-            ariaNgLogService.debug('[aria2WebSocketRpcService.planToReconnect] next reconnection is pending in ' + ariaNgSettingService.getWebSocketReconnectInterval() + "ms");
-        }
+            ariaNgLogService.debug('[aria2WebSocketRpcService.planToReconnect] next reconnection is pending in ' + ariaNgSettingService.getWebSocketReconnectInterval() + 'ms');
+        };
 
         return {
             request: function (context) {

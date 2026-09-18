@@ -1,3 +1,4 @@
+// 验证连接断开、重连和迟到响应时的请求生命周期，尤其防止失败写请求在重连后被重放。
 'use strict';
 
 const assert = require('assert');

@@ -175,6 +175,7 @@
                             <span translate>Files</span>
                         </a>
                     </li>
+                    <!-- 过滤服务属于应用级；离开列表后仍在此显示进度，批量提示与自动过滤提示由控制器统一决定优先级。 -->
                     <li class="bt-file-filter-group"
                         ng-if="isNewTaskPage() || showAutomaticBtFileFilterStatus() || showBulkBtFileFilterGlobalStatus()"
                         ng-class="{'has-filter-rule': isNewTaskPage(), 'has-filter-status': showAutomaticBtFileFilterStatus() || showBulkBtFileFilterGlobalStatus()}">

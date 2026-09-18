@@ -277,8 +277,8 @@
                     }
                 }
 
-                for (var i = 0; i < this.list.length; i++) {
-                    var task = this.list[i];
+                for (i = 0; i < this.list.length; i++) {
+                    task = this.list[i];
 
                     if (!$rootScope.filterTask(task)) {
                         continue;
@@ -319,8 +319,8 @@
                     }
                 }
 
-                for (var i = 0; i < this.list.length; i++) {
-                    var task = this.list[i];
+                for (i = 0; i < this.list.length; i++) {
+                    task = this.list[i];
 
                     if (!$rootScope.filterTask(task)) {
                         continue;
@@ -354,6 +354,7 @@
 
         $rootScope.keydownActions = {
             find: function (event) {
+                // 窄屏隐藏搜索框时保留浏览器自身的查找快捷键，不能把焦点送到不可见输入框。
                 if (!angular.element('#search-box').is(':visible')) {
                     return;
                 }
@@ -496,7 +497,7 @@
             ariaNgNotificationService.notifyTaskError(event.task);
         });
 
-        $rootScope.$on('$locationChangeStart', function (event) {
+        $rootScope.$on('$locationChangeStart', function () {
             ariaNgCommonService.closeAllDialogs();
 
             $rootScope.loadPromise = null;
@@ -517,7 +518,7 @@
             $rootScope.taskContext.enableSelectAll = false;
         });
 
-        $rootScope.$on('$routeChangeStart', function (event, next, current) {
+        $rootScope.$on('$routeChangeStart', function () {
             var location = $location.path();
 
             setNavbarSelected(location);
@@ -539,7 +540,7 @@
             });
         }
 
-        $rootScope.$on('$locationChangeSuccess', function (event, newUrl) {
+        $rootScope.$on('$locationChangeSuccess', function () {
             if (autoRefreshAfterPageLoad) {
                 $window.location.reload();
             }

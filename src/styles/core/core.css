@@ -176,6 +176,7 @@ td {
     display: none;
 }
 
+/* 窄屏视觉提示会缩短，但辅助技术仍需要完整进度；此文本只视觉隐藏，不能改成 display: none。 */
 .main-header .bt-file-filter-status-accessible {
     position: absolute;
     width: 1px;

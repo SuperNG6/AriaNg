@@ -2,45 +2,16 @@
     'use strict';
 
     angular.module('ariaNg').provider('ariaNgAssetsCacheService', [function () {
-        var assetsRoot = {};
-        var languageAssetsPrefix = 'languages.';
-        
-        var getAsset = function (path) {
-            var parts = path.split('.'),
-                result = assetsRoot;
-
-            for (var i = 0; i < parts.length; i++) {
-                if (angular.isUndefined(result[parts[i]])) {
-                    return null;
-                }
-
-                result = result[parts[i]];
-            }
-
-            return result;
-        };
-
-        var setAsset = function (path, value) {
-            var parts = path.split('.'),
-                result = assetsRoot;
-
-            for (var i = 0; i < parts.length - 1; i++) {
-                if (angular.isUndefined(result[parts[i]])) {
-                    result[parts[i]] = {};
-                }
-
-                result = result[parts[i]];
-            }
-
-            result[parts[parts.length - 1]] = value;
-        };
+        // All-In-One 在配置阶段注入语言文本，运行阶段通过同一字典读取；无原型对象避免语言名与继承键冲突。
+        var languageAssets = Object.create(null);
 
         this.getLanguageAsset = function (languageName) {
-            return getAsset(languageAssetsPrefix + languageName);
+            var content = languageAssets[languageName];
+            return angular.isUndefined(content) ? null : content;
         };
 
         this.setLanguageAsset = function (languageName, languageContent) {
-            setAsset(languageAssetsPrefix + languageName, languageContent);
+            languageAssets[languageName] = languageContent;
         };
 
         this.$get = function () {
@@ -50,7 +21,7 @@
                 getLanguageAsset: function (languageName) {
                     return that.getLanguageAsset(languageName);
                 }
-            }
+            };
         };
     }]);
 }());

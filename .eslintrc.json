@@ -13,7 +13,10 @@
     "rules": {
         "indent": [
             "error",
-            4
+            4,
+            {
+                "SwitchCase": 1
+            }
         ],
         "linebreak-style": [
             "error",
@@ -26,6 +29,37 @@
         "semi": [
             "error",
             "always"
-        ]
-    }
+        ],
+        "angular/di": [
+            "error",
+            "array"
+        ],
+        "angular/controller-as": "off",
+        "angular/controller-as-route": "off",
+        "angular/angularelement": "off",
+        "angular/definedundefined": "off",
+        "angular/json-functions": "off",
+        "angular/typecheck-array": "off",
+        "angular/typecheck-number": "off",
+        "angular/typecheck-object": "off",
+        "angular/typecheck-string": "off",
+        "angular/document-service": "off",
+        "angular/window-service": "off"
+    },
+    "globals": {
+        "angular": false,
+        "$": false,
+        "angularDragula": false,
+        "echarts": false
+    },
+    "overrides": [
+        {
+            "files": [
+                "src/scripts/core/root.js"
+            ],
+            "rules": {
+                "angular/on-watch": "off"
+            }
+        }
+    ]
 }

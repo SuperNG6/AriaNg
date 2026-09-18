@@ -554,6 +554,7 @@
 }
 
 /* task-table */
+/* 浅色主题的批量操作区配色；布局改动放到 controls/task-table.css，深色主题需同步检查状态对比度。 */
 .skin-aria-ng .bulk-bt-filter-rail {
     color: #3c4852;
     background-color: #f7fafc;

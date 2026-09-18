@@ -54,6 +54,7 @@
             'format.bt-file-filter.bulk.running': 'Filtering: {{processed}}/{{total}} · {{threshold}} MB',
             'format.bt-file-filter.bulk.complete': 'Finished: {{filtered}} filtered · {{skipped}} not processed · {{failed}} failed',
             'format.bt-file-filter.bulk.enqueue-failed': 'The BT file filter could not start. Check browser storage and try again.',
+            // 这些键供状态机动态选择；修改具名占位符时同步中文，发布前再同步所有语言。
             'format.bt-file-filter.resuming': 'Resuming small-file processing for {{count}} unfinished BT tasks',
             'format.bt-file-filter.processing': 'Excluding small files from BT tasks: {{processed}}/{{total}} tasks processed',
             'format.bt-file-filter.waiting': 'Waiting for file lists from {{count}} BT tasks',
@@ -75,6 +76,7 @@
             'format.bt-file-filter.stage.starting-full': 'Starting full task',
             'format.bt-file-filter.stage.starting-fallback': 'Starting fallback task',
             'BT file filter warning': 'BT file filter warning',
+            // 清理发生在 aria2 完成下载时，且可能影响目录中同名文件；翻译不能弱化这个语义。
             'BT file filter cleanup warning': 'Only applies to new magnet and torrent tasks. For tasks containing both small and large files, files below the threshold are excluded; if every file is below the threshold, all files are kept. After completion, aria2 may delete excluded files and same-named files already present in the download directory.',
             'Search': 'Search',
             'Default': 'Default',

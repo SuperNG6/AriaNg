@@ -1,3 +1,4 @@
+// 把版本一致性、发布保护和归档内容当作发布契约，防止只生成文件却遗漏交付检查。
 'use strict';
 
 const assert = require('assert');
@@ -11,9 +12,9 @@ const workflow = fs.readFileSync(workflowPath, 'utf8');
 const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const packageLock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
 
-assert.strictEqual(packageJson.version, '2.2.2');
-assert.strictEqual(packageLock.version, '2.2.2');
-assert.strictEqual(packageLock.packages[''].version, '2.2.2');
+assert.strictEqual(packageJson.version, '2.2.3');
+assert.strictEqual(packageLock.version, '2.2.3');
+assert.strictEqual(packageLock.packages[''].version, '2.2.3');
 assert(fs.existsSync('docs/releases/' + packageJson.version + '.md'), 'release notes must exist for package version ' + packageJson.version);
 
 [
@@ -62,7 +63,7 @@ const workflowDispatch = workflow.slice(workflowDispatchIndex, permissionsIndex)
 
 assert(/\^\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$/.test(workflow), 'workflow must strictly validate unprefixed versions');
 assert(workflow.includes('github.event_name == \'workflow_dispatch\''), 'manual and tag release paths must be distinct');
-assert(workflowDispatch.includes("default: '2.2.2'"), 'manual release default must match version 2.2.2');
+assert(workflowDispatch.includes("default: '2.2.3'"), 'manual release default must match version 2.2.3');
 assert(!workflow.includes('--clobber'), 'release assets must never be overwritten');
 assert(!workflow.includes('--draft'), 'release must not be a draft');
 assert(!workflow.includes('--prerelease'), 'release must not be a prerelease');

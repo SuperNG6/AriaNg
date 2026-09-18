@@ -4,6 +4,7 @@
     margin-right: 15px;
 }
 
+/* 批量过滤区的布局由此控制，颜色放在主题文件；窄屏规则需同时容纳阈值输入、进度和操作按钮。 */
 .bulk-bt-filter-rail {
     position: relative;
     display: flex;

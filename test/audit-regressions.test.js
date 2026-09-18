@@ -1,3 +1,4 @@
+// 集中覆盖审计发现的跨模块边界；涉及底层队列的行为需保留真实依赖验证，不能只靠简化 stub。
 'use strict';
 
 const assert = require('assert');

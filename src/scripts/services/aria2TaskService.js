@@ -72,6 +72,7 @@
             };
         };
 
+        // 服务器路径可能使用 Windows 分隔符；统一后再去掉下载目录前缀，生成列表中的相对路径。
         var getRelativePath = function (task, file) {
             var downloadPath = task.dir;
             var relativePath = file.path;
@@ -179,6 +180,7 @@
             return directoryNode;
         };
 
+        // 把目录树展平为展示行，同时汇总目录选中状态；虚拟目录没有可发送给 aria2 的文件索引。
         var fillAllNodes = function (node, allDirectoryMap, allNodes) {
             if (!node) {
                 return;
@@ -202,7 +204,7 @@
             }
 
             if (node.files && node.files.length) {
-                for (var i = 0; i < node.files.length; i++) {
+                for (i = 0; i < node.files.length; i++) {
                     var fileNode = node.files[i];
                     allNodes.push(fileNode);
 
@@ -245,7 +247,7 @@
 
             var pieceIndex = 0;
 
-            for (var i = 0; i < bitField.length; i++) {
+            for (i = 0; i < bitField.length; i++) {
                 var bitSet = parseInt(bitField[i], 16);
 
                 for (var j = 1; j <= 4; j++) {
@@ -327,6 +329,7 @@
             if (task.files) {
                 var selectedFileCount = 0;
                 var allDirectories = [];
+                // 目录名可以是 constructor 或 __proto__，必须使用无原型字典，不能把继承属性误认为目录节点。
                 var allDirectoryMap = Object.create(null);
 
                 for (var i = 0; i < task.files.length; i++) {
@@ -363,7 +366,7 @@
                 var isSingleUrlTask = true;
                 var firstUri = task.files[0].uris[0].uri;
 
-                for (var i = 0; i < task.files[0].uris.length; i++) {
+                for (i = 0; i < task.files[0].uris.length; i++) {
                     var uri = task.files[0].uris[i].uri;
 
                     if (uri !== firstUri) {
@@ -649,6 +652,7 @@
                     callback: callback
                 });
             },
+            // multicall 外层成功不代表子调用成功；拿到完整可重建信息并成功新建后，才删除旧下载结果。
             retryTask: function (gid, callback, silent) {
                 var deferred = $q.defer();
 
@@ -738,6 +742,7 @@
 
                 return deferred.promise;
             },
+            // 逐项串行重试并分别统计成败；成功和失败分支都只推进下一项一次，避免 Promise 错误链重复重试。
             retryTasks: function (tasks, callback, silent) {
                 if (!callback) {
                     ariaNgLogService.warn('[aria2TaskService.retryTasks] callback is null');
@@ -1002,7 +1007,7 @@
                     totalPieces.push(0);
                 }
 
-                for (var i = 0; i < peers.length; i++) {
+                for (i = 0; i < peers.length; i++) {
                     var peer = peers[i];
                     var peerPieces = getPieceStatus(peer.bitfield, task.numPieces);
                     var completedPieceCount = 0;
@@ -1024,10 +1029,12 @@
                 var totalCompletedPieceCount = 0;
 
                 if (totalPieces.length > 0) {
+                    // Each pass consumes one available piece layer until a peer gap is found.
+                    // eslint-disable-next-line no-constant-condition
                     while (true) {
                         var completed = true;
 
-                        for (var i = 0; i < totalPieces.length; i++) {
+                        for (i = 0; i < totalPieces.length; i++) {
                             if (totalPieces[i] > 0) {
                                 totalCompletedPieceCount++;
                                 totalPieces[i]--;

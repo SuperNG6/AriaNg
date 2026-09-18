@@ -146,7 +146,7 @@
             angular.element('#log-detail-modal').modal();
         };
 
-        $('#log-detail-modal').on('hide.bs.modal', function (e) {
+        $('#log-detail-modal').on('hide.bs.modal', function () {
             $scope.context.currentLog = null;
         });
 

@@ -1,0 +1,65 @@
+{
+  "mode": "standard",
+  "cases": [
+    "light: real touch swipe, options load once, 375px",
+    "light: status watcher released on real Angular scope destruction",
+    "light: automatic root/child and bulk badges render, stop clears all",
+    "dark: real touch swipe, options load once, 375px",
+    "dark: status watcher released on real Angular scope destruction",
+    "dark: automatic root/child and bulk badges render, stop clears all"
+  ],
+  "errors": [],
+  "languages": [
+    {
+      "theme": "light",
+      "language": "zh_Hans",
+      "label": "选项",
+      "downloadNow": "立即下载",
+      "offline": false
+    },
+    {
+      "theme": "light",
+      "language": "fr_FR",
+      "label": "Options",
+      "downloadNow": "Télécharger maintenant",
+      "offline": false
+    },
+    {
+      "theme": "light",
+      "language": "en",
+      "label": "Options",
+      "downloadNow": "Download Now",
+      "offline": false
+    },
+    {
+      "theme": "dark",
+      "language": "zh_Hans",
+      "label": "选项",
+      "downloadNow": "立即下载",
+      "offline": false
+    },
+    {
+      "theme": "dark",
+      "language": "fr_FR",
+      "label": "Options",
+      "downloadNow": "Télécharger maintenant",
+      "offline": false
+    },
+    {
+      "theme": "dark",
+      "language": "en",
+      "label": "Options",
+      "downloadNow": "Download Now",
+      "offline": false
+    }
+  ],
+  "rpcMethods": {
+    "aria2.getGlobalStat": 8,
+    "aria2.getGlobalOption": 2,
+    "aria2.getVersion": 2,
+    "aria2.tellActive": 6,
+    "aria2.tellStatus": 17,
+    "aria2.getOption": 4,
+    "aria2.changeOption": 2
+  }
+}

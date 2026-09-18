@@ -32,6 +32,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Pages 发布标准目录构建；此命令包含 lint，发布归档与翻译冻结检查由 release 工作流负责。
       - name: Build site
         run: npm run build
 

@@ -1,3 +1,4 @@
+// 英文来自 defaultLanguage.js，不存在 en.txt；开发检查中文，发布检查所有语言，并校验具名占位符。
 'use strict';
 
 const assert = require('assert');

@@ -4,6 +4,7 @@
     angular.module('ariaNg').controller('MainController', ['$rootScope', '$scope', '$route', '$window', '$location', '$document', '$interval', 'clipboard', 'aria2RpcErrors', 'ariaNgCommonService', 'ariaNgVersionService', 'ariaNgNotificationService', 'ariaNgSettingService', 'ariaNgMonitorService', 'ariaNgTitleService', 'ariaNgBtFileFilterService', 'aria2TaskService', 'aria2SettingService', function ($rootScope, $scope, $route, $window, $location, $document, $interval, clipboard, aria2RpcErrors, ariaNgCommonService, ariaNgVersionService, ariaNgNotificationService, ariaNgSettingService, ariaNgMonitorService, ariaNgTitleService, ariaNgBtFileFilterService, aria2TaskService, aria2SettingService) {
         var pageTitleRefreshPromise = null;
         var globalStatRefreshPromise = null;
+        // 主控制器拥有过滤服务生命周期，列表路由切换不应停止后台处理；认证失败或主作用域销毁时停止。
         var btFileFilterStarted = false;
 
         var getTaskListPageType = function () {
@@ -82,6 +83,7 @@
             enabled: ariaNgSettingService.getBtFileFilterEnabled(),
             minSizeMb: ariaNgSettingService.getBtFileFilterMinSizeMb()
         };
+        // 状态对象由服务原地更新，界面保留引用即可，不要复制成只读一次的快照。
         $scope.btFileFilterStatus = ariaNgBtFileFilterService.getStatus();
         $scope.bulkBtFileFilterStatus = ariaNgBtFileFilterService.getBulkStatus();
 
@@ -369,7 +371,7 @@
                 ariaNgCommonService.confirm('Confirm Remove', 'Are you sure you want to remove the selected task?', 'warning', removeTasks);
             } else {
                 removeTasks();
-            };
+            }
         };
 
         $scope.clearStoppedTasks = function () {
@@ -473,6 +475,7 @@
                 !($location.path() === '/downloading' && $scope.isTaskListFileListEnabled());
         };
 
+        // 批量状态含完成提示期间优先展示，避免顶部同时出现两组竞争空间的过滤状态。
         $scope.showAutomaticBtFileFilterStatus = function () {
             return $scope.btFileFilterStatus.visible && !$scope.bulkBtFileFilterStatus.visible;
         };

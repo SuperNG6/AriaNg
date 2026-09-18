@@ -1,0 +1,208 @@
+
+> ariang@2.2.2 test
+> node test/task-list-file-list.test.js && node test/release-workflow.test.js && node test/aria2-websocket-rpc.test.js && node test/audit-regressions.test.js && node test/new-task-small-file-filter.test.js && node test/bt-filter-pending-badge.test.js && node test/i18n-contract.test.js && node test/lint-task.test.js && node test/language-assets-cache.test.js
+
+PASS defines the generic task-list preference with a false default
+PASS migrates the previous downloading preference
+PASS prefers an existing generic preference over the legacy value
+PASS persists the generic preference without changing the legacy value
+PASS exposes one toolbar toggle on all task-list routes
+PASS throttles active file details while retaining one-second basic progress
+PASS does not let basic refreshes overtake a pending file detail refresh
+PASS recovers refreshing when a pending file detail response is never delivered
+PASS does not rebuild active virtual file trees on basic ticks
+PASS refreshes active file details immediately when Files mode is enabled
+PASS refreshes active file details immediately after the wall clock moves backward
+PASS does not add periodic full refreshes to waiting and stopped pages
+PASS requests full details after a basic tick detects task-set changes
+PASS requests full details after a same-length task replacement
+PASS shows the bulk BT filter rail only on Downloading while Files mode is open
+PASS caches one bulk preview per full response instead of scanning in the template
+PASS clears rendered filter badges immediately when the filter service stops
+PASS confirms and submits the cached bulk GID snapshot once
+PASS does not submit bulk filtering with an invalid threshold
+PASS shares the BT threshold with MainController and debounces preview rescans
+PASS reports a rejected bulk enqueue after a delayed confirmation
+PASS blocks a stale preview after completion until fresh task details arrive
+PASS does not acknowledge completion with a full response requested before completion
+PASS does not let an old full response unlock the preview after completion expires
+PASS threshold debounce never acknowledges completion from cached task details
+PASS requests fresh task details after completion when periodic refresh is disabled
+PASS recovers when the initial completion detail request is lost
+PASS keeps the completion refresh watchdog after the notice expires
+PASS does not schedule bulk completion refreshes outside Downloading
+PASS requests fresh details after an invalid completion threshold is corrected
+PASS recovers completion refresh after an older full response is lost
+PASS cancels a pending completion retry after Unauthorized
+PASS a new completion is not blocked by the previous completion retry
+PASS retries a failed completion refresh until fresh details succeed
+PASS renders the generic nested panel with read-only file controls
+PASS renders an accessible responsive bulk BT filter rail in both themes
+PASS keeps Angular template interpolations structurally complete
+PASS rebuilds the Angular template cache before reloading the development server
+PASS keeps bulk progress visible globally when the contextual rail is hidden
+39 test(s) passed
+PASS release workflow contract
+PASS rejects disabled-reconnect requests exactly once and never sends to the closed socket
+PASS keeps auto-reconnect pending requests for the existing reconnect path
+PASS sends connecting requests once on open and retains their response callback
+PASS settles a synchronous socket send failure instead of leaking a pending request
+4 test(s) passed
+PASS never replays a rejected queued write after reconnect using the real websocket dependency
+PASS keeps queue identity and actual transport aligned until reload
+PASS renders reserved object-property names as ordinary torrent directories
+PASS settles a retry when multicall contains a missing-task fault
+PASS retries each batch item once and finishes only after all input items settle
+5 tests, 0 failed
+PASS swipes fixed new-task tabs with boundaries and loads options only when needed
+PASS adds magnets for metadata discovery while preserving Download Later for ordinary URLs
+PASS restores and updates the last download path for the current RPC
+PASS falls back to the existing unscoped download path history after upgrade
+PASS wires new-task option inputs to the form model
+PASS enqueues only successful URI metadata candidates with the snapshotted intent
+PASS forces local torrents paused while filtering and enqueues the returned GID
+PASS enqueues a delayed local torrent response after the form switches to Metalink
+PASS never enqueues a delayed Metalink response after the form switches to torrent
+PASS leaves disabled URI, torrent, and Metalink submissions unchanged
+PASS rejects a new task when the enabled header filter threshold is invalid
+PASS does not submit an invalid enabled filter with Ctrl+Enter
+PASS MainController exposes stable filter status and starts after successful global stat
+PASS defines safe small-file filter defaults and queue storage key
+PASS persists enabled state and a valid integer threshold
+PASS rejects invalid thresholds without replacing the saved value
+PASS builds an RPC identity without storing alias or secret
+PASS supports atomic task options and per-task pause overrides
+PASS sends multiple task options in one RPC call
+PASS requests metadata relationship fields only for targeted waiting-list discovery
+PASS recognizes supported BT metadata inputs only
+PASS requires the HTTP URL path to end in torrent
+PASS filters only mixed-size file lists with strict threshold semantics
+PASS persists immutable jobs under the current RPC identity
+PASS rejects duplicate jobs and exposes a stable idle status object
+PASS follows metadata child, filters mixed files, enables cleanup, and starts Download Now
+PASS does not mistake an active magnet metadata file for the final BT task
+PASS Download Later pauses a recovered active magnet child before filtering
+PASS Download Later pauses a waiting BT child before filtering
+PASS immediate download filters a recovered active magnet child without unpausing it
+PASS silently removes a job when aggregate unpause reports a nested missing GID
+PASS aggregate unpause success wins over an unrelated nested missing GID
+PASS recovers five paused magnet children when aria2 no longer retains metadata results
+PASS recovers an already-registered active BT task by its unique InfoHash
+PASS InfoHash recovery never reselects files excluded from an existing BT task
+PASS InfoHash recovery leaves an all-small partial selection unchanged
+PASS Download Later InfoHash recovery never pauses a pre-existing active task
+PASS coalesces an InfoHash recovery already owned by another filter job
+PASS does not choose an arbitrary already-registered task when InfoHash matches are ambiguous
+PASS keeps a recovered Download Later remote-torrent child paused after filtering
+PASS does not choose an arbitrary child when multiple paused tasks follow the same root
+PASS fully selected all-small and all-large tasks start without option changes
+PASS Download Later never starts a successfully filtered task
+PASS three failed filter calls restore full selection and cleanup before fallback start
+PASS third uncertain filter response reconciles before restoring full selection
+PASS tellStatus network failure retains the job without consuming filter retries
+PASS a missing metadata root without a child remains queued and non-mutating
+PASS sanitizes scalar and malformed persisted queues before exposing or starting jobs
+PASS removes a missing metadata root after three consecutive empty reconciliation scans
+PASS seeing a live root resets the consecutive missing-root scan count
+PASS missing-root reconciliation ignores transient list failures and ambiguous children
+PASS completed and errored remote torrent roots settle after a bounded child creation race
+PASS a deleted local torrent is removed from the queue without a warning
+PASS jobs for another RPC identity remain stored and unprocessed
+PASS start is idempotent and restored queues expose resuming status before processing
+PASS polling never overlaps while a task status request is pending
+PASS dispatches one hundred ready jobs within one hundred 250ms coordinator ticks
+PASS metadata waiting has no timeout and remains visible
+PASS successful filtering shows a stable complete summary and auto-hides after five seconds
+PASS reconciles a lost filter response without consuming another filter attempt
+PASS reconciles a lost restoration response and keeps Download Later paused
+PASS switching RPC identity starts a separate aggregate batch
+PASS enqueue after an RPC switch counts stored and new jobs once
+PASS startup summarizes and clears a queue containing only completed tombstones
+PASS enqueue alongside a completed tombstone preserves the whole batch aggregate
+PASS defers fallback notification while the current batch is still waiting
+PASS persists completed batch outcomes across reload until the last job settles
+PASS preserves completed outcomes through an RPC switch round trip
+PASS emits one fallback notification with the final completed batch count
+PASS all-small partial selection restores every file and the original cleanup option
+PASS all-large partial selection preserves user options and keeps Download Later paused
+PASS uncertain full restoration reconciles before completing Download Later
+PASS a metadata-waiting job does not block later ready jobs
+PASS RPC switch after tellStatus does not continue the A job against B
+PASS RPC switch during metadata-child discovery cannot mutate either endpoint queue
+PASS RPC switch after getOption does not change the A job against B
+PASS RPC switch after changeOption does not start or remove the A job against B
+PASS RPC switch after unpause does not remove the A job from B callback context
+PASS removed task in a starting stage is silently discarded
+PASS removed BT task waiting for metadata is silently discarded before filtering
+PASS removed BT task in an option-mutation stage is silently discarded
+PASS direct metadata child discovery waits for exactly one child before mutating
+PASS terminal non-BT remote torrent root settles as non-applicable
+PASS restoration reconciliation preserves a present falsy cleanup value
+PASS switching to an RPC identity without jobs clears the previous toolbar status
+PASS an unresolved missing root remains queued after another job completes
+PASS preserves a user pause when an applying bulk task becomes ineligible
+PASS resumes an owned pause when a bulk task becomes ineligible after reload
+PASS classifies only active BT payload downloads and preserves existing file choices
+PASS previews only payload tasks whose current selection can be narrowed
+PASS does not bulk-preview a BT child still owned by automatic filtering
+PASS does not bulk-preview an InfoHash-recovered child without a following link
+PASS previews one hundred thousand BT files in one linear file pass
+PASS exposes the current bulk task, stage, threshold, and badge mapping while applying
+PASS force-pauses an active bulk task when its option change does not converge
+PASS does not report filtered when aria2 returns OK without applying select-file
+PASS reports a directly converged bulk task only after a stable readback
+PASS does not inspect the next bulk task while the current option change is unresolved
+PASS keeps the immutable bulk GID definition separate from the current checkpoint
+PASS enqueues one thousand bulk gids with two storage writes and one small checkpoint
+PASS reloads an applying bulk checkpoint and reconciles without a duplicate mutation
+PASS does not reapply a restored bulk checkpoint to an ineligible task
+PASS only restores a changed ineligible task from an applying checkpoint
+PASS does not enable cleanup for a task that was already partially selected
+PASS skips a bulk candidate that is no longer active before processing it
+PASS skips a stale bulk snapshot after an automatic job adopts its following child
+PASS skips a stale bulk snapshot after InfoHash recovery adopts a child without following
+PASS skips a bulk item adopted by automatic filtering during option inspection
+PASS uses the latest file selection after option inspection before bulk mutation
+PASS skips a bulk task paused while option inspection is in flight
+PASS restores the exact original selection after three failed bulk changes
+PASS stops rollback after three persisted attempts and continues the bulk run
+PASS preserves the rollback retry limit across reload
+PASS services a new-task filter job before advancing a bulk task
+PASS advances a bulk run after one automatic turn even when metadata keeps waiting
+PASS an old bulk pause callback cannot release the restarted operation
+PASS an old bulk resume callback cannot release the restarted operation
+PASS ignores an old bulk status callback after stop and keeps the restarted tick locked
+PASS does not continue a bulk RPC chain when stopped during option inspection
+PASS reconciles a stopped bulk option change without sending it twice after restart
+PASS discards an orphan bulk definition instead of reconstructing an uncommitted run
+PASS does not announce bulk completion until the terminal checkpoint is durable
+PASS renders the remembered filter and global toolbar status
+PASS compact filter status reports the count appropriate to each lifecycle state
+PASS keeps the full filter status while the desktop toolbar still has room
+PASS scopes tablet search hiding to active filter controls or status
+PASS keeps inactive task search compact at the narrow tablet boundary
+PASS find shortcut only consumes the event while search is visible
+PASS styles the BT filter as an accessible grouped rule in every state
+PASS keeps the operable disabled BT filter text at accessible contrast
+PASS keeps fixed content below a dynamically wrapping mobile header
+PASS automatic filtering waits for stable readback after OK and preserves its target across reload
+PASS automatic InfoHash recovery retains original selection and cleanup while confirming a mutation
+PASS automatic restoration waits for observed full selection after a successful response
+PASS automatic active recovery resumes its persisted restart pause and confirms the target
+PASS automatic OK without selection convergence falls back only after verified restoration
+PASS automatic InfoHash confirmation preserves a user pause observed after mutation
+137 test(s) passed
+PASS getPendingGidStageMap excludes terminal jobs
+PASS getPendingGidStageMap scopes to the current RPC
+PASS getPendingGidStageMap maps both childGid and rootGid when childGid is set
+PASS getPendingGidStageMap maps only rootGid when childGid is empty
+PASS getPendingGidStageMap returns an empty object when there are no pending jobs
+PASS getPendingGidStageMap returns a fresh object on each call
+PASS sanitizeJob rejects malformed jobs so getPendingGidStageMap never sees them
+PASS start registers a polling interval that stop cancels and resets status to idle
+PASS stop allows start to be re-invoked after an RPC disconnect
+PASS start is idempotent and stop is a no-op when never started
+10 test(s) passed
+PASS development BT filter translation contract (1 language file(s))
+PASS real Gulp lint rejects errors, accepts valid code, and never rewrites source
+PASS provider and runtime language cache preserve content, isolation, overwrite and missing values

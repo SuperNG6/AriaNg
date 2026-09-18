@@ -2,6 +2,9 @@
     'use strict';
 
     angular.module('ariaNg').factory('ariaNgBtFileFilterService', ['$interval', '$timeout', 'ariaNgConstants', 'ariaNgStorageService', 'ariaNgSettingService', 'ariaNgNotificationService', 'ariaNgLogService', 'aria2TaskService', function ($interval, $timeout, ariaNgConstants, ariaNgStorageService, ariaNgSettingService, ariaNgNotificationService, ariaNgLogService, aria2TaskService) {
+        // 这里协调两种流程：新任务等待元数据后自动过滤；已有任务按固定 GID 队列批量过滤。
+        // RPC 成功只表示请求被接收，完成判定必须回读文件选择和选项；不要在写入回调中直接结算。
+        // 删除未选文件由 aria2 在完成时执行，本服务不直接删除本地文件。
         var storageKey = ariaNgConstants.btFileFilterQueueStorageKey;
         var bulkStorageKey = ariaNgConstants.btFileFilterBulkQueueStorageKey;
         var bulkProgressStorageKey = ariaNgConstants.btFileFilterBulkProgressStorageKey;
@@ -27,6 +30,7 @@
             return isFinite(number) && number >= 0 ? Math.floor(number) : defaultValue;
         };
 
+        // aria2 的文件索引从 1 开始，不能用数组下标替代；持久化恢复时同时去重和剔除非法值。
         var normalizeIndexes = function (value) {
             if (!Array.isArray(value)) {
                 return [];
@@ -59,6 +63,8 @@
             return /^[0-9a-f]{40}$/.test(normalized) ? normalized : '';
         };
 
+        // 存储是跨版本、跨刷新输入边界，只恢复已知字段和阶段。
+        // 自动任务不恢复 verifiedAt：刷新后必须重新观察完整的稳定窗口。
         var sanitizeJob = function (job) {
             if (!job || typeof job !== 'object' || Array.isArray(job)) {
                 return null;
@@ -150,6 +156,7 @@
             return sanitized;
         };
 
+        // 批次定义保存提交时的阈值和任务顺序；后续设置变化不能改变正在执行的批次。
         var sanitizeBulkDefinition = function (definition) {
             if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
                 return null;
@@ -244,6 +251,7 @@
             return sanitized;
         };
 
+        // 进度必须匹配批次定义，current 只能对应游标所指任务，避免恢复后重复结算或处理错 GID。
         var sanitizeBulkProgress = function (progress, definitions) {
             if (!progress || typeof progress !== 'object' || Array.isArray(progress) ||
                 typeof progress.rpcIdentity !== 'string') {
@@ -300,6 +308,7 @@
         var jobs = sanitizeQueue(storedJobs);
         var bulkDefinitions = sanitizeBulkDefinitions(storedBulkDefinitions);
         var bulkProgresses = sanitizeBulkProgresses(storedBulkProgresses, bulkDefinitions);
+        // 定义与进度分两次落盘；没有进度的定义属于未完成提交，不作为可恢复批次执行。
         bulkDefinitions = bulkDefinitions.filter(function (definition) {
             return bulkProgresses.some(function (progress) {
                 return progress.rpcIdentity === definition.rpcIdentity;
@@ -351,8 +360,9 @@
         var bulkStatusRpcIdentity = null;
         var bulkStatusVersion = 0;
         var pollingPromise = null;
-        var tickInProgress = false;
+        // 唯一的在途锁保存操作对象而非布尔值；旧回调只能释放自己的锁，不能解锁新一轮工作。
         var activeOperation = null;
+        // stop/start 后让旧生命周期的回调失效；RPC 身份检查另行隔离不同服务器。
         var lifecycleGeneration = 0;
         var restoredQueue = jobs.length > 0;
         var activeRpcIdentity = null;
@@ -367,6 +377,7 @@
             fallback: 0
         };
 
+        // 只看 URL 路径的 torrent 后缀，查询参数中的文件名不能把普通下载误判成元数据任务。
         var isBtMetadataUrl = function (url) {
             var normalized = String(url || '').trim();
             if (/^magnet:\?/i.test(normalized)) {
@@ -377,6 +388,7 @@
             return /^https?:\/\/[^/?#]+\/.*\.torrent$/i.test(urlWithoutQueryOrFragment);
         };
 
+        // 新任务没有可保留的大文件时回退为全选，避免提交空 select-file。
         var planFiles = function (files, thresholdBytes) {
             var selectedIndexes = [];
             var allIndexes = [];
@@ -404,6 +416,7 @@
             };
         };
 
+        // 列表展示可能混入虚拟目录；过滤计划只接受具有合法 aria2 索引和长度的真实文件。
         var getRealFiles = function (files) {
             var realFiles = [];
             if (!Array.isArray(files)) {
@@ -433,11 +446,11 @@
             return !!(task && task.status === 'active' && isBtPayloadTask(task));
         };
 
+        // 已有任务只从当前已选文件中缩小范围，保留用户手动排除项；全小文件时保持原选择。
         var planExistingTaskFiles = function (files, thresholdBytes) {
             var originalSelectedIndexes = [];
             var targetSelectedIndexes = [];
             var allIndexes = [];
-            var realFileCount = 0;
 
             for (var i = 0; Array.isArray(files) && i < files.length; i++) {
                 var index = Number(files[i].index);
@@ -447,7 +460,6 @@
                     continue;
                 }
                 var selected = String(files[i].selected) === 'true';
-                realFileCount++;
                 allIndexes.push(index);
                 if (selected) {
                     originalSelectedIndexes.push(index);
@@ -471,10 +483,11 @@
                 targetSelectedIndexes: targetSelectedIndexes,
                 allIndexes: allIndexes,
                 filteredFileCount: originalSelectedIndexes.length - targetSelectedIndexes.length,
-                realFileCount: realFileCount
+                realFileCount: allIndexes.length
             };
         };
 
+        // 自动流程同时拥有元数据根任务和已接管的子任务，批量流程必须避让二者。
         var getAutomaticOwnedGids = function (rpcIdentity) {
             var automaticGids = {};
             for (var jobIndex = 0; jobIndex < jobs.length; jobIndex++) {
@@ -493,6 +506,7 @@
             return !!task && (!!automaticGids[task.gid] || !!automaticGids[task.following]);
         };
 
+        // 预览由控制器缓存，不在模板 digest 中反复计算。这里先做轻量资格检查，再由规划器遍历文件。
         var getBulkPreview = function (tasks, thresholdBytes) {
             var gids = [];
             var fileCount = 0;
@@ -511,7 +525,7 @@
                     continue;
                 }
                 var plan = planExistingTaskFiles(task.files, thresholdBytes);
-                if (plan.realFileCount > 0 && plan.mode === 'filter') {
+                if (plan.mode === 'filter') {
                     gids.push(task.gid);
                     fileCount += plan.filteredFileCount;
                 }
@@ -600,15 +614,12 @@
             return ariaNgSettingService.getCurrentRpcIdentity();
         };
 
+        // 每条异步 RPC 链捕获连接身份和生命周期，后续回调不得读取新连接并冒充原操作继续执行。
         var createOperationContext = function (rpcIdentity) {
             return {
                 rpcIdentity: rpcIdentity,
                 generation: lifecycleGeneration
             };
-        };
-
-        var getOperationRpcIdentity = function (operation) {
-            return operation && typeof operation === 'object' ? operation.rpcIdentity : operation;
         };
 
         var isOperationCurrent = function (operation) {
@@ -679,6 +690,7 @@
             updateStatusValues();
         };
 
+        // 隐藏计时器只作用于创建时的状态版本，旧批次的计时器不能隐藏新批次提示。
         var autoHideStatus = function (delay) {
             var version = statusVersion;
             $timeout(function () {
@@ -753,9 +765,8 @@
             return true;
         };
 
-        var isJobOnCurrentRpc = function (job, rpcIdentity) {
-            var identity = getOperationRpcIdentity(rpcIdentity);
-            return isOperationCurrent(rpcIdentity) && job.rpcIdentity === identity &&
+        var isJobOnCurrentRpc = function (job, operation) {
+            return isOperationCurrent(operation) && job.rpcIdentity === operation.rpcIdentity &&
                 jobs.indexOf(job) >= 0;
         };
 
@@ -780,6 +791,7 @@
             return !!(response && (response.success || response.hasSuccess));
         };
 
+        // 只有明确的 GID 不存在才按删除处理；断网、超时等暂时失败不能清空恢复队列。
         var isNotFoundResponse = function (response) {
             if (responseHasSuccess(response)) {
                 return false;
@@ -805,6 +817,7 @@
             return false;
         };
 
+        // 选择集合按值比较，不依赖 RPC 返回顺序；排序副本以免改写已保存的目标快照。
         var sameIndexes = function (files, indexes) {
             var selected = [];
             for (var i = 0; i < files.length; i++) {
@@ -828,21 +841,21 @@
             return true;
         };
 
+        // 先验证锁的对象身份，防止停止后迟到的回调释放另一次操作的锁。
         var finishTick = function (operation) {
             if (activeOperation !== operation) {
                 return;
             }
             activeOperation = null;
-            tickInProgress = false;
             synchronizeRpcIdentity();
             if (getCurrentJobs().length > 0) {
                 updateActiveStatus();
             }
         };
 
-        var removeDeletedJob = function (job, rpcIdentity) {
-            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick(rpcIdentity);
+        var removeDeletedJob = function (job, operation) {
+            if (!isJobOnCurrentRpc(job, operation)) {
+                finishTick(operation);
                 return;
             }
 
@@ -857,7 +870,7 @@
                     setIdleStatus();
                 }
             }
-            finishTick(rpcIdentity);
+            finishTick(operation);
         };
 
         var notifyFallback = function () {
@@ -897,9 +910,10 @@
             clearCompletedOutcomes();
         };
 
-        var completeJob = function (job, outcome, rpcIdentity) {
-            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick(rpcIdentity);
+        // 先记录终态，再汇总整批结果；未完成任务仍存在时保留终态记录，供刷新后恢复统计。
+        var completeJob = function (job, outcome, operation) {
+            if (!isJobOnCurrentRpc(job, operation)) {
+                finishTick(operation);
                 return;
             }
 
@@ -913,57 +927,59 @@
             } else {
                 updateActiveStatus();
             }
-            finishTick(rpcIdentity);
+            finishTick(operation);
         };
 
-        var startOrComplete = function (job, task, outcome, rpcIdentity) {
-            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick(rpcIdentity);
+        // 仅在新任务要求过滤后启动且任务仍暂停时恢复下载；稍后下载和复用已有任务都不能被自动启动覆盖。
+        var startOrComplete = function (job, task, outcome, operation) {
+            if (!isJobOnCurrentRpc(job, operation)) {
+                finishTick(operation);
                 return;
             }
 
             if (!job.startAfterFilter || job.preserveExistingSelection || task.status !== 'paused') {
-                completeJob(job, outcome, rpcIdentity);
+                completeJob(job, outcome, operation);
                 return;
             }
 
             job.stage = 'starting-' + outcome;
             touchAndSave(job);
             aria2TaskService.startTasks([task.gid], function (response) {
-                if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                    finishTick(rpcIdentity);
+                if (!isJobOnCurrentRpc(job, operation)) {
+                    finishTick(operation);
                     return;
                 }
 
                 if (responseHasSuccess(response)) {
-                    completeJob(job, outcome, rpcIdentity);
+                    completeJob(job, outcome, operation);
                 } else if (isNotFoundResponse(response)) {
-                    removeDeletedJob(job, rpcIdentity);
+                    removeDeletedJob(job, operation);
                 } else {
-                    finishTick(rpcIdentity);
+                    finishTick(operation);
                 }
             }, true);
         };
 
-        var processStartingJob = function (job, task, rpcIdentity) {
-            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick(rpcIdentity);
+        var processStartingJob = function (job, task, operation) {
+            if (!isJobOnCurrentRpc(job, operation)) {
+                finishTick(operation);
                 return;
             }
 
             var outcome = job.stage.substring('starting-'.length);
             if (task.status === 'removed') {
-                removeDeletedJob(job, rpcIdentity);
+                removeDeletedJob(job, operation);
                 return;
             }
             if (task.status !== 'paused') {
-                completeJob(job, outcome, rpcIdentity);
+                completeJob(job, outcome, operation);
                 return;
             }
 
-            startOrComplete(job, task, outcome, rpcIdentity);
+            startOrComplete(job, task, outcome, operation);
         };
 
+        // 文件选择与清理选项必须同时匹配并持续稳定；单次匹配不足以证明 aria2 已完成状态切换。
         var hasStableAutomaticSelection = function (job, task, indexes, cleanup, options) {
             if (!sameIndexes(task.files, indexes) ||
                 getOptionValue(options, 'bt-remove-unselected-file', 'false') !== cleanup) {
@@ -977,13 +993,14 @@
             return Date.now() - job.verifiedAt >= bulkConvergenceDelay;
         };
 
-        var waitForAutomaticMutation = function (job, task, rpcIdentity) {
+        // 写入后先等待收敛；需要暂停促使生效时，先记录暂停归属，再发 RPC，刷新后才能补偿恢复。
+        var waitForAutomaticMutation = function (job, task, operation) {
             if (job.mutationRequestedAt > Date.now()) {
                 job.mutationRequestedAt = Date.now();
             }
             if (job.verifiedAt || (job.mutationRequestedAt &&
                 Date.now() - job.mutationRequestedAt < bulkMutationRestartDelay)) {
-                finishTick(rpcIdentity);
+                finishTick(operation);
                 return true;
             }
             // An active payload may need a restart boundary, as with bulk filtering.
@@ -994,16 +1011,16 @@
                 job.mutationRequestedAt = Date.now();
                 touchAndSave(job);
                 aria2TaskService.pauseTasks([task.gid], function () {
-                    finishTick(rpcIdentity);
+                    finishTick(operation);
                 }, true);
                 return true;
             }
             return false;
         };
 
-        var processRestoration = function (job, task, plan, rpcIdentity) {
-            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick(rpcIdentity);
+        var processRestoration = function (job, task, plan, operation) {
+            if (!isJobOnCurrentRpc(job, operation)) {
+                finishTick(operation);
                 return;
             }
 
@@ -1011,16 +1028,16 @@
             var outcome = job.restorationOutcome || 'fallback';
             var fullSelection = allIndexes.join(',');
             aria2TaskService.getTaskOptions(task.gid, function (optionsResponse) {
-                if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                    finishTick(rpcIdentity);
+                if (!isJobOnCurrentRpc(job, operation)) {
+                    finishTick(operation);
                     return;
                 }
 
                 if (!optionsResponse || !optionsResponse.success) {
                     if (isNotFoundResponse(optionsResponse)) {
-                        removeDeletedJob(job, rpcIdentity);
+                        removeDeletedJob(job, operation);
                     } else {
-                        finishTick(rpcIdentity);
+                        finishTick(operation);
                     }
                     return;
                 }
@@ -1031,11 +1048,11 @@
                 }
                 if (job.restoreAttempted && hasStableAutomaticSelection(job, task, allIndexes,
                     job.originalRemoveUnselectedFile, currentOptions)) {
-                    startOrComplete(job, task, outcome, rpcIdentity);
+                    startOrComplete(job, task, outcome, operation);
                     return;
                 }
 
-                if (waitForAutomaticMutation(job, task, rpcIdentity)) {
+                if (waitForAutomaticMutation(job, task, operation)) {
                     return;
                 }
                 job.restoreAttempted = true;
@@ -1045,37 +1062,38 @@
                     'select-file': fullSelection,
                     'bt-remove-unselected-file': job.originalRemoveUnselectedFile
                 }, function (response) {
-                    if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                        finishTick(rpcIdentity);
+                    if (!isJobOnCurrentRpc(job, operation)) {
+                        finishTick(operation);
                         return;
                     }
 
                     if (isNotFoundResponse(response)) {
-                        removeDeletedJob(job, rpcIdentity);
+                        removeDeletedJob(job, operation);
                     } else {
-                        finishTick(rpcIdentity);
+                        finishTick(operation);
                     }
                 }, true);
             }, true);
         };
 
-        var processMixedTask = function (job, task, plan, rpcIdentity) {
-            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick(rpcIdentity);
+        // 首次写入前保存原选项和目标选择，重试沿用快照，不能把中间状态重新当作原始状态。
+        var processMixedTask = function (job, task, plan, operation) {
+            if (!isJobOnCurrentRpc(job, operation)) {
+                finishTick(operation);
                 return;
             }
 
             aria2TaskService.getTaskOptions(task.gid, function (optionsResponse) {
-                if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                    finishTick(rpcIdentity);
+                if (!isJobOnCurrentRpc(job, operation)) {
+                    finishTick(operation);
                     return;
                 }
 
                 if (!optionsResponse || !optionsResponse.success) {
                     if (isNotFoundResponse(optionsResponse)) {
-                        removeDeletedJob(job, rpcIdentity);
+                        removeDeletedJob(job, operation);
                     } else {
-                        finishTick(rpcIdentity);
+                        finishTick(operation);
                     }
                     return;
                 }
@@ -1092,11 +1110,11 @@
                     job.originalRemoveUnselectedFile : 'true';
                 if (job.stage === 'applying-filter' && hasStableAutomaticSelection(job, task,
                     job.selectedIndexes, targetRemoveUnselectedFile, currentOptions)) {
-                    startOrComplete(job, task, 'filtered', rpcIdentity);
+                    startOrComplete(job, task, 'filtered', operation);
                     return;
                 }
 
-                if (waitForAutomaticMutation(job, task, rpcIdentity)) {
+                if (waitForAutomaticMutation(job, task, operation)) {
                     return;
                 }
 
@@ -1108,7 +1126,7 @@
                     job.restartAttempted = false;
                     job.verifiedAt = 0;
                     touchAndSave(job);
-                    processRestoration(job, task, plan, rpcIdentity);
+                    processRestoration(job, task, plan, operation);
                     return;
                 }
 
@@ -1120,27 +1138,27 @@
                     'select-file': plan.selectedIndexes.join(','),
                     'bt-remove-unselected-file': targetRemoveUnselectedFile
                 }, function (response) {
-                    if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                        finishTick(rpcIdentity);
+                    if (!isJobOnCurrentRpc(job, operation)) {
+                        finishTick(operation);
                         return;
                     }
 
                     if (isNotFoundResponse(response)) {
-                        removeDeletedJob(job, rpcIdentity);
+                        removeDeletedJob(job, operation);
                     } else {
                         if (!response || !response.success) {
                             job.mutationRequestedAt = 0;
                             touchAndSave(job);
                         }
-                        finishTick(rpcIdentity);
+                        finishTick(operation);
                     }
                 }, true);
             }, true);
         };
 
-        var processBtTask = function (job, task, rpcIdentity) {
-            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick(rpcIdentity);
+        var processBtTask = function (job, task, operation) {
+            if (!isJobOnCurrentRpc(job, operation)) {
+                finishTick(operation);
                 return;
             }
 
@@ -1149,7 +1167,7 @@
                 job.verifiedAt = 0;
                 touchAndSave(job);
                 aria2TaskService.startTasks([task.gid], function () {
-                    finishTick(rpcIdentity);
+                    finishTick(operation);
                 }, true);
                 return;
             }
@@ -1174,37 +1192,38 @@
                 plan = planFiles(task.files, job.thresholdBytes);
             }
             if (job.stage === 'restoring-full') {
-                processRestoration(job, task, plan, rpcIdentity);
+                processRestoration(job, task, plan, operation);
             } else if (plan.mode === 'filter') {
-                processMixedTask(job, task, plan, rpcIdentity);
+                processMixedTask(job, task, plan, operation);
             } else if (plan.mode === 'all-small' && !sameIndexes(task.files, plan.allIndexes)) {
                 job.stage = 'restoring-full';
                 job.restoreAttempted = false;
                 job.restorationOutcome = 'full';
                 job.allIndexes = plan.allIndexes;
                 touchAndSave(job);
-                processRestoration(job, task, plan, rpcIdentity);
+                processRestoration(job, task, plan, operation);
             } else {
-                startOrComplete(job, task, 'full', rpcIdentity);
+                startOrComplete(job, task, 'full', operation);
             }
         };
 
-        var pauseForDownloadLater = function (job, task, rpcIdentity) {
-            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick(rpcIdentity);
+        // 这是新任务的明确“稍后下载”意图，不能套用于按 InfoHash 找回的已有任务。
+        var pauseForDownloadLater = function (job, task, operation) {
+            if (!isJobOnCurrentRpc(job, operation)) {
+                finishTick(operation);
                 return;
             }
 
             aria2TaskService.pauseTasks([task.gid], function (response) {
-                if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                    finishTick(rpcIdentity);
+                if (!isJobOnCurrentRpc(job, operation)) {
+                    finishTick(operation);
                     return;
                 }
 
                 if (isNotFoundResponse(response)) {
-                    removeDeletedJob(job, rpcIdentity);
+                    removeDeletedJob(job, operation);
                 } else {
-                    finishTick(rpcIdentity);
+                    finishTick(operation);
                 }
             }, true);
         };
@@ -1257,15 +1276,17 @@
             job.updatedAt = Date.now();
         };
 
-        var recoverMetadataChild = function (job, rpcIdentity, terminalStatus) {
+        // 元数据根任务可能已消失；先从等待列表（含暂停任务）找子任务，再查活动列表。
+        // 候选必须唯一，宁可继续等待也不能接管同 Hash 的另一任务。
+        var recoverMetadataChild = function (job, operation, terminalStatus) {
             aria2TaskService.getTaskList('waiting', true, function (response) {
-                if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                    finishTick(rpcIdentity);
+                if (!isJobOnCurrentRpc(job, operation)) {
+                    finishTick(operation);
                     return;
                 }
 
                 if (!response || !response.success) {
-                    finishTick(rpcIdentity);
+                    finishTick(operation);
                     return;
                 }
 
@@ -1289,7 +1310,7 @@
                 }
 
                 if (recoveredCurrentJob) {
-                    finishTick(rpcIdentity);
+                    finishTick(operation);
                     return;
                 }
 
@@ -1298,24 +1319,25 @@
                     job.missingRootScanCount = 0;
                     job.terminalChildScanCount = 0;
                     touchAndSave(job);
-                    finishTick(rpcIdentity);
+                    finishTick(operation);
                     return;
                 }
 
-                recoverActiveChild(job, rpcIdentity, terminalStatus,
+                recoverActiveChild(job, operation, terminalStatus,
                     waitingCandidates.byInfoHash);
             }, true, ['gid', 'following', 'infoHash']);
         };
 
-        var recoverActiveChild = function (job, rpcIdentity, terminalStatus, waitingGidsByInfoHash) {
+        // 连接失败不计入“确实没找到”的扫描次数；按 Hash 复用的任务保留已有选择和启动意图。
+        var recoverActiveChild = function (job, operation, terminalStatus, waitingGidsByInfoHash) {
             aria2TaskService.getTaskList('downloading', true, function (response) {
-                if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                    finishTick(rpcIdentity);
+                if (!isJobOnCurrentRpc(job, operation)) {
+                    finishTick(operation);
                     return;
                 }
 
                 if (!response || !response.success) {
-                    finishTick(rpcIdentity);
+                    finishTick(operation);
                     return;
                 }
 
@@ -1371,12 +1393,12 @@
                 }
 
                 if (recoveredCurrentJob) {
-                    finishTick(rpcIdentity);
+                    finishTick(operation);
                     return;
                 }
 
                 if (duplicateCurrentJob) {
-                    removeDeletedJob(job, rpcIdentity);
+                    removeDeletedJob(job, operation);
                     return;
                 }
 
@@ -1384,44 +1406,44 @@
                     job.missingRootScanCount = 0;
                     job.terminalChildScanCount = 0;
                     touchAndSave(job);
-                    finishTick(rpcIdentity);
+                    finishTick(operation);
                     return;
                 }
 
                 var counter = terminalStatus ? 'terminalChildScanCount' : 'missingRootScanCount';
                 job[counter] = normalizeInteger(job[counter], 0) + 1;
                 if (job[counter] >= missingRootScanLimit) {
-                    removeDeletedJob(job, rpcIdentity);
+                    removeDeletedJob(job, operation);
                     return;
                 }
                 touchAndSave(job);
 
-                finishTick(rpcIdentity);
+                finishTick(operation);
             }, true, ['gid', 'following', 'infoHash']);
         };
 
-        var processTaskResponse = function (job, response, rpcIdentity) {
-            if (!isJobOnCurrentRpc(job, rpcIdentity)) {
-                finishTick(rpcIdentity);
+        var processTaskResponse = function (job, response, operation) {
+            if (!isJobOnCurrentRpc(job, operation)) {
+                finishTick(operation);
                 return;
             }
 
             if (!response || !response.success) {
                 if (isNotFoundResponse(response)) {
                     if (!job.childGid && (job.sourceType === 'magnet' || job.sourceType === 'remote-torrent')) {
-                        recoverMetadataChild(job, rpcIdentity, null);
+                        recoverMetadataChild(job, operation, null);
                     } else {
-                        removeDeletedJob(job, rpcIdentity);
+                        removeDeletedJob(job, operation);
                     }
                 } else {
-                    finishTick(rpcIdentity);
+                    finishTick(operation);
                 }
                 return;
             }
 
             var task = response.data;
             if (task.status === 'removed') {
-                removeDeletedJob(job, rpcIdentity);
+                removeDeletedJob(job, operation);
                 return;
             }
             if (job.missingRootScanCount) {
@@ -1442,43 +1464,42 @@
                 touchAndSave(job);
             }
             if (job.stage.indexOf('starting-') === 0) {
-                processStartingJob(job, task, rpcIdentity);
+                processStartingJob(job, task, operation);
             } else if (isMetadataRoot && task.followedBy && task.followedBy.length === 1) {
                 job.childGid = task.followedBy[0];
                 job.stage = 'waiting-files';
                 job.terminalChildScanCount = 0;
                 touchAndSave(job);
-                finishTick(rpcIdentity);
+                finishTick(operation);
             } else if (isMetadataRoot && task.followedBy && task.followedBy.length > 1) {
                 job.stage = 'waiting-metadata';
                 job.terminalChildScanCount = 0;
                 touchAndSave(job);
-                finishTick(rpcIdentity);
+                finishTick(operation);
             } else if (isMetadataRoot && (task.status === 'complete' || task.status === 'error')) {
-                recoverMetadataChild(job, rpcIdentity, task.status);
+                recoverMetadataChild(job, operation, task.status);
             } else if (isMetadataRoot) {
                 job.stage = 'waiting-metadata';
                 touchAndSave(job);
-                finishTick(rpcIdentity);
+                finishTick(operation);
             } else if (task.bittorrent && task.files && task.files.length > 0) {
                 if (!job.startAfterFilter && !job.preserveExistingSelection &&
                     (task.status === 'active' || task.status === 'waiting')) {
-                    pauseForDownloadLater(job, task, rpcIdentity);
+                    pauseForDownloadLater(job, task, operation);
                 } else {
-                    processBtTask(job, task, rpcIdentity);
+                    processBtTask(job, task, operation);
                 }
             } else {
                 job.stage = 'waiting-metadata';
                 touchAndSave(job);
-                finishTick(rpcIdentity);
+                finishTick(operation);
             }
         };
 
-        var isBulkRunOnCurrentRpc = function (definition, progress, rpcIdentity) {
-            var identity = getOperationRpcIdentity(rpcIdentity);
-            return isOperationCurrent(rpcIdentity) &&
+        var isBulkRunOnCurrentRpc = function (definition, progress, operation) {
+            return isOperationCurrent(operation) &&
                 bulkDefinitions.indexOf(definition) >= 0 && bulkProgresses.indexOf(progress) >= 0 &&
-                definition.rpcIdentity === identity && progress.rpcIdentity === identity;
+                definition.rpcIdentity === operation.rpcIdentity && progress.rpcIdentity === operation.rpcIdentity;
         };
 
         var finishBulkTick = function (operation) {
@@ -1486,14 +1507,14 @@
                 return;
             }
             activeOperation = null;
-            tickInProgress = false;
             synchronizeRpcIdentity();
             updateBulkRunningStatus();
         };
 
-        var completeBulkRun = function (definition, progress, rpcIdentity) {
-            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                finishBulkTick(rpcIdentity);
+        // 先持久化移除进度再宣布完成；写失败时保留批次，避免界面已完成而刷新后再次执行。
+        var completeBulkRun = function (definition, progress, operation) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                finishBulkTick(operation);
                 return;
             }
 
@@ -1501,14 +1522,14 @@
             bulkProgresses.splice(progressIndex, 1);
             if (!saveBulkProgresses()) {
                 bulkProgresses.splice(progressIndex, 0, progress);
-                finishBulkTick(rpcIdentity);
+                finishBulkTick(operation);
                 return;
             }
 
             bulkDefinitions.splice(bulkDefinitions.indexOf(definition), 1);
             saveBulkDefinitions();
 
-            bulkStatusRpcIdentity = getOperationRpcIdentity(rpcIdentity);
+            bulkStatusRpcIdentity = operation.rpcIdentity;
             bulkStatusVersion++;
             bulkStatus.visible = true;
             bulkStatus.type = 'complete';
@@ -1529,15 +1550,15 @@
                     setBulkIdleStatus();
                 }
             }, 5000);
-            if (activeOperation === rpcIdentity) {
+            if (activeOperation === operation) {
                 activeOperation = null;
-                tickInProgress = false;
             }
         };
 
-        var settleBulkCurrent = function (definition, progress, outcome, rpcIdentity) {
-            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                finishBulkTick(rpcIdentity);
+        // 游标、计数和 current 一起保存；写失败回滚内存，保证统计按任务结算一次而非按 RPC 次数累加。
+        var settleBulkCurrent = function (definition, progress, outcome, operation) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                finishBulkTick(operation);
                 return;
             }
 
@@ -1566,22 +1587,23 @@
                 progress.failed = previous.failed;
                 progress.filteredFiles = previous.filteredFiles;
                 progress.current = previous.current;
-                finishBulkTick(rpcIdentity);
+                finishBulkTick(operation);
                 return;
             }
 
             if (progress.cursor >= definition.gids.length) {
-                completeBulkRun(definition, progress, rpcIdentity);
+                completeBulkRun(definition, progress, operation);
             } else {
                 automaticJobTurn = true;
                 updateBulkRunningStatus();
-                finishBulkTick(rpcIdentity);
+                finishBulkTick(operation);
             }
         };
 
-        var applyBulkOptions = function (definition, progress, task, rpcIdentity) {
-            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                finishBulkTick(rpcIdentity);
+        // 先保存阶段、重试次数和写入时间，再发变更；回调只结束本轮，下一轮回读确认实际结果。
+        var applyBulkOptions = function (definition, progress, task, operation) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                finishBulkTick(operation);
                 return;
             }
 
@@ -1591,7 +1613,7 @@
             current.mutationRequestedAt = Date.now();
             current.verifiedAt = 0;
             if (!saveBulkProgresses()) {
-                finishBulkTick(rpcIdentity);
+                finishBulkTick(operation);
                 return;
             }
             updateBulkRunningStatus();
@@ -1600,26 +1622,27 @@
                 'select-file': current.targetSelectedIndexes.join(','),
                 'bt-remove-unselected-file': current.targetRemoveUnselectedFile
             }, function (response) {
-                if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                    finishBulkTick(rpcIdentity);
+                if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                    finishBulkTick(operation);
                     return;
                 }
                 if (isNotFoundResponse(response)) {
-                    settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                    settleBulkCurrent(definition, progress, 'skipped', operation);
                 } else {
-                    finishBulkTick(rpcIdentity);
+                    finishBulkTick(operation);
                 }
             }, true);
         };
 
-        var requestBulkPause = function (definition, progress, rpcIdentity) {
-            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                finishBulkTick(rpcIdentity);
+        // 暂停归属先落盘；只有本流程造成的暂停才允许后续恢复，用户原有暂停不能被抢走。
+        var requestBulkPause = function (definition, progress, operation) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                finishBulkTick(operation);
                 return;
             }
             var current = progress.current;
             if (current.pauseRetryCount >= bulkMutationRetryLimit) {
-                settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                settleBulkCurrent(definition, progress, 'failed', operation);
                 return;
             }
             var previousPauseRetryCount = current.pauseRetryCount;
@@ -1632,20 +1655,16 @@
                 current.pauseRetryCount = previousPauseRetryCount;
                 current.pauseRequestedAt = previousPauseRequestedAt;
                 current.pauseOwned = previousPauseOwned;
-                finishBulkTick(rpcIdentity);
+                finishBulkTick(operation);
                 return;
             }
             updateBulkRunningStatus();
             aria2TaskService.pauseTasks([current.gid], function () {
-                if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                    finishBulkTick(rpcIdentity);
-                    return;
-                }
-                finishBulkTick(rpcIdentity);
+                finishBulkTick(operation);
             }, true);
         };
 
-        var beginBulkPause = function (definition, progress, outcome, rpcIdentity) {
+        var beginBulkPause = function (definition, progress, outcome, operation) {
             var current = progress.current;
             var previousStage = current.stage;
             var previousResumeOutcome = current.resumeOutcome;
@@ -1661,39 +1680,35 @@
                 current.resumeOutcome = previousResumeOutcome;
                 current.pauseRetryCount = previousPauseRetryCount;
                 current.pauseRequestedAt = previousPauseRequestedAt;
-                finishBulkTick(rpcIdentity);
+                finishBulkTick(operation);
                 return;
             }
             updateBulkRunningStatus();
-            requestBulkPause(definition, progress, rpcIdentity);
+            requestBulkPause(definition, progress, operation);
         };
 
-        var requestBulkResume = function (definition, progress, rpcIdentity) {
-            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                finishBulkTick(rpcIdentity);
+        var requestBulkResume = function (definition, progress, operation) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                finishBulkTick(operation);
                 return;
             }
             var current = progress.current;
             if (current.resumeRetryCount >= bulkMutationRetryLimit) {
-                settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                settleBulkCurrent(definition, progress, 'failed', operation);
                 return;
             }
             current.resumeRetryCount++;
             if (!saveBulkProgresses()) {
-                finishBulkTick(rpcIdentity);
+                finishBulkTick(operation);
                 return;
             }
             updateBulkRunningStatus();
             aria2TaskService.startTasks([current.gid], function () {
-                if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                    finishBulkTick(rpcIdentity);
-                    return;
-                }
-                finishBulkTick(rpcIdentity);
+                finishBulkTick(operation);
             }, true);
         };
 
-        var beginBulkResume = function (definition, progress, outcome, rpcIdentity) {
+        var beginBulkResume = function (definition, progress, outcome, operation) {
             var current = progress.current;
             var previousStage = current.stage;
             var previousResumeOutcome = current.resumeOutcome;
@@ -1706,28 +1721,29 @@
                 current.stage = previousStage;
                 current.resumeOutcome = previousResumeOutcome;
                 current.resumeRetryCount = previousResumeRetryCount;
-                finishBulkTick(rpcIdentity);
+                finishBulkTick(operation);
                 return;
             }
             updateBulkRunningStatus();
-            requestBulkResume(definition, progress, rpcIdentity);
+            requestBulkResume(definition, progress, operation);
         };
 
-        var restoreBulkOptions = function (definition, progress, task, options, rpcIdentity) {
-            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                finishBulkTick(rpcIdentity);
+        // 失败补偿恢复原来的已选子集和清理选项，不能扩大为全选；恢复成功仍算本次过滤失败。
+        var restoreBulkOptions = function (definition, progress, task, options, operation) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                finishBulkTick(operation);
                 return;
             }
             var current = progress.current;
             if (sameIndexes(task.files, current.originalSelectedIndexes) &&
                 getOptionValue(options, 'bt-remove-unselected-file', 'false') ===
                     current.originalRemoveUnselectedFile) {
-                settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                settleBulkCurrent(definition, progress, 'failed', operation);
                 return;
             }
 
             if (current.restoreRetryCount >= bulkMutationRetryLimit) {
-                settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                settleBulkCurrent(definition, progress, 'failed', operation);
                 return;
             }
 
@@ -1737,7 +1753,7 @@
             current.verifiedAt = 0;
             if (!saveBulkProgresses()) {
                 current.restoreRetryCount = previousRestoreRetryCount;
-                finishBulkTick(rpcIdentity);
+                finishBulkTick(operation);
                 return;
             }
 
@@ -1745,19 +1761,19 @@
                 'select-file': current.originalSelectedIndexes.join(','),
                 'bt-remove-unselected-file': current.originalRemoveUnselectedFile
             }, function (response) {
-                if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                    finishBulkTick(rpcIdentity);
+                if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                    finishBulkTick(operation);
                     return;
                 }
                 if (isNotFoundResponse(response)) {
-                    settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                    settleBulkCurrent(definition, progress, 'skipped', operation);
                 } else {
-                    finishBulkTick(rpcIdentity);
+                    finishBulkTick(operation);
                 }
             }, true);
         };
 
-        var beginBulkRestoration = function (definition, progress, task, options, rpcIdentity) {
+        var beginBulkRestoration = function (definition, progress, task, options, operation) {
             var current = progress.current;
             var previousRestoreRetryCount = current.restoreRetryCount;
             current.stage = 'restoring';
@@ -1765,29 +1781,29 @@
             if (!saveBulkProgresses()) {
                 current.stage = 'applying';
                 current.restoreRetryCount = previousRestoreRetryCount;
-                finishBulkTick(rpcIdentity);
+                finishBulkTick(operation);
                 return;
             }
             updateBulkRunningStatus();
-            restoreBulkOptions(definition, progress, task, options, rpcIdentity);
+            restoreBulkOptions(definition, progress, task, options, operation);
         };
 
-        var applyBulkInspection = function (definition, progress, task, options, rpcIdentity) {
-            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                finishBulkTick(rpcIdentity);
+        var applyBulkInspection = function (definition, progress, task, options, operation) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                finishBulkTick(operation);
                 return;
             }
             if (isTaskOwnedByAutomaticJob(task,
-                getAutomaticOwnedGids(getOperationRpcIdentity(rpcIdentity))) ||
+                getAutomaticOwnedGids(operation.rpcIdentity)) ||
                 !isActiveBtPayloadTask(task)) {
-                settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                settleBulkCurrent(definition, progress, 'skipped', operation);
                 return;
             }
 
             var current = progress.current;
             var plan = planExistingTaskFiles(task.files, definition.thresholdBytes);
             if (plan.mode !== 'filter') {
-                settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                settleBulkCurrent(definition, progress, 'skipped', operation);
                 return;
             }
             var originalCleanup = getOptionValue(options, 'bt-remove-unselected-file', 'false');
@@ -1802,126 +1818,123 @@
             current.pauseOwned = false;
             current.resumeRetryCount = 0;
             current.resumeOutcome = 'filtered';
-            applyBulkOptions(definition, progress, task, rpcIdentity);
+            applyBulkOptions(definition, progress, task, operation);
         };
 
-        var inspectBulkTaskAfterOptions = function (definition, progress, options, rpcIdentity) {
+        // getOption 期间用户可能暂停或改选，因此拿到选项后再读取最新任务状态，随后才决定是否写入。
+        var inspectBulkTaskAfterOptions = function (definition, progress, options, operation) {
             aria2TaskService.getTaskStatus(progress.current.gid, function (response) {
-                if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                    finishBulkTick(rpcIdentity);
+                if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                    finishBulkTick(operation);
                     return;
                 }
                 if (!response || !response.success) {
                     if (isNotFoundResponse(response)) {
-                        settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                        settleBulkCurrent(definition, progress, 'skipped', operation);
                     } else {
-                        finishBulkTick(rpcIdentity);
+                        finishBulkTick(operation);
                     }
                     return;
                 }
-                applyBulkInspection(definition, progress, response.data, options, rpcIdentity);
+                applyBulkInspection(definition, progress, response.data, options, operation);
             }, true);
         };
 
-        var inspectBulkOptions = function (definition, progress, task, rpcIdentity) {
+        // 写入阶段按回读状态推进；选择与清理选项稳定后，还要完成属于本流程的恢复启动才能结算。
+        var inspectBulkOptions = function (definition, progress, task, operation) {
             aria2TaskService.getTaskOptions(task.gid, function (response) {
-                if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                    finishBulkTick(rpcIdentity);
+                if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                    finishBulkTick(operation);
                     return;
                 }
                 if (!response || !response.success) {
                     if (isNotFoundResponse(response)) {
-                        settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                        settleBulkCurrent(definition, progress, 'skipped', operation);
                     } else {
-                        finishBulkTick(rpcIdentity);
+                        finishBulkTick(operation);
                     }
                     return;
                 }
 
                 var current = progress.current;
                 var options = response.data || {};
-                if (current.stage === 'applying' || current.stage === 'restoring' ||
-                    current.stage === 'pausing' || current.stage === 'resuming') {
-                    var outcome = current.stage === 'applying' ? 'filtered' :
-                        current.stage === 'restoring' ? 'failed' : current.resumeOutcome;
-                    var expectedIndexes = outcome === 'filtered' ? current.targetSelectedIndexes :
-                        current.originalSelectedIndexes;
-                    var expectedCleanup = outcome === 'filtered' ? current.targetRemoveUnselectedFile :
-                        current.originalRemoveUnselectedFile;
-                    if (sameIndexes(task.files, expectedIndexes) &&
-                        getOptionValue(options, 'bt-remove-unselected-file', 'false') === expectedCleanup) {
-                        if (current.verifiedAt &&
-                            Date.now() - current.verifiedAt >= bulkConvergenceDelay) {
-                            if (task.status === 'paused' && current.pauseOwned) {
-                                beginBulkResume(definition, progress, outcome, rpcIdentity);
-                            } else {
-                                settleBulkCurrent(definition, progress, outcome, rpcIdentity);
-                            }
-                        } else if (!current.verifiedAt) {
-                            current.verifiedAt = Date.now();
-                            if (!saveBulkProgresses()) {
-                                current.verifiedAt = 0;
-                            }
-                            finishBulkTick(rpcIdentity);
+                var outcome = current.stage === 'applying' ? 'filtered' :
+                    current.stage === 'restoring' ? 'failed' : current.resumeOutcome;
+                var expectedIndexes = outcome === 'filtered' ? current.targetSelectedIndexes :
+                    current.originalSelectedIndexes;
+                var expectedCleanup = outcome === 'filtered' ? current.targetRemoveUnselectedFile :
+                    current.originalRemoveUnselectedFile;
+                if (sameIndexes(task.files, expectedIndexes) &&
+                    getOptionValue(options, 'bt-remove-unselected-file', 'false') === expectedCleanup) {
+                    if (current.verifiedAt &&
+                        Date.now() - current.verifiedAt >= bulkConvergenceDelay) {
+                        if (task.status === 'paused' && current.pauseOwned) {
+                            beginBulkResume(definition, progress, outcome, operation);
                         } else {
-                            finishBulkTick(rpcIdentity);
+                            settleBulkCurrent(definition, progress, outcome, operation);
                         }
-                    } else if (current.stage === 'applying' || current.stage === 'restoring') {
-                        current.verifiedAt = 0;
-                        if (Date.now() - current.mutationRequestedAt < bulkMutationRestartDelay) {
-                            finishBulkTick(rpcIdentity);
-                        } else if (task.status === 'paused') {
-                            if (current.pauseOwned) {
-                                beginBulkResume(definition, progress, outcome, rpcIdentity);
-                            } else if (outcome === 'filtered') {
-                                beginBulkRestoration(definition, progress, task, options, rpcIdentity);
-                            } else {
-                                restoreBulkOptions(definition, progress, task, options, rpcIdentity);
-                            }
-                        } else {
-                            beginBulkPause(definition, progress, outcome, rpcIdentity);
+                    } else if (!current.verifiedAt) {
+                        current.verifiedAt = Date.now();
+                        if (!saveBulkProgresses()) {
+                            current.verifiedAt = 0;
                         }
-                    } else if (current.stage === 'pausing') {
-                        current.verifiedAt = 0;
-                        if (task.status === 'paused') {
-                            if (Date.now() - current.pauseRequestedAt < bulkMutationRestartDelay) {
-                                finishBulkTick(rpcIdentity);
-                            } else {
-                                beginBulkResume(definition, progress, outcome, rpcIdentity);
-                            }
-                        } else if (Date.now() - current.pauseRequestedAt >= bulkPauseRetryDelay) {
-                            requestBulkPause(definition, progress, rpcIdentity);
-                        } else {
-                            finishBulkTick(rpcIdentity);
-                        }
-                    } else if (outcome === 'filtered') {
-                        if (current.retryCount >= bulkMutationRetryLimit) {
-                            beginBulkRestoration(definition, progress, task, options, rpcIdentity);
-                        } else {
-                            applyBulkOptions(definition, progress, task, rpcIdentity);
-                        }
-                    } else if (current.restoreRetryCount >= bulkMutationRetryLimit) {
-                        settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                        finishBulkTick(operation);
                     } else {
-                        restoreBulkOptions(definition, progress, task, options, rpcIdentity);
+                        finishBulkTick(operation);
                     }
-                    return;
+                } else if (current.stage === 'applying' || current.stage === 'restoring') {
+                    current.verifiedAt = 0;
+                    if (Date.now() - current.mutationRequestedAt < bulkMutationRestartDelay) {
+                        finishBulkTick(operation);
+                    } else if (task.status === 'paused') {
+                        if (current.pauseOwned) {
+                            beginBulkResume(definition, progress, outcome, operation);
+                        } else if (outcome === 'filtered') {
+                            beginBulkRestoration(definition, progress, task, options, operation);
+                        } else {
+                            restoreBulkOptions(definition, progress, task, options, operation);
+                        }
+                    } else {
+                        beginBulkPause(definition, progress, outcome, operation);
+                    }
+                } else if (current.stage === 'pausing') {
+                    current.verifiedAt = 0;
+                    if (task.status === 'paused') {
+                        if (Date.now() - current.pauseRequestedAt < bulkMutationRestartDelay) {
+                            finishBulkTick(operation);
+                        } else {
+                            beginBulkResume(definition, progress, outcome, operation);
+                        }
+                    } else if (Date.now() - current.pauseRequestedAt >= bulkPauseRetryDelay) {
+                        requestBulkPause(definition, progress, operation);
+                    } else {
+                        finishBulkTick(operation);
+                    }
+                } else if (outcome === 'filtered') {
+                    if (current.retryCount >= bulkMutationRetryLimit) {
+                        beginBulkRestoration(definition, progress, task, options, operation);
+                    } else {
+                        applyBulkOptions(definition, progress, task, operation);
+                    }
+                } else if (current.restoreRetryCount >= bulkMutationRetryLimit) {
+                    settleBulkCurrent(definition, progress, 'failed', operation);
+                } else {
+                    restoreBulkOptions(definition, progress, task, options, operation);
                 }
-                applyBulkInspection(definition, progress, task, options, rpcIdentity);
             }, true);
         };
 
-        var processBulkTaskResponse = function (definition, progress, response, rpcIdentity) {
-            if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                finishBulkTick(rpcIdentity);
+        var processBulkTaskResponse = function (definition, progress, response, operation) {
+            if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                finishBulkTick(operation);
                 return;
             }
             if (!response || !response.success) {
                 if (isNotFoundResponse(response)) {
                     settleBulkCurrent(definition, progress,
-                        progress.current.stage === 'resuming' ? 'failed' : 'skipped', rpcIdentity);
+                        progress.current.stage === 'resuming' ? 'failed' : 'skipped', operation);
                 } else {
-                    finishBulkTick(rpcIdentity);
+                    finishBulkTick(operation);
                 }
                 return;
             }
@@ -1930,69 +1943,56 @@
             var current = progress.current;
             if (current.stage === 'resuming') {
                 if (task.status !== 'paused') {
-                    inspectBulkOptions(definition, progress, task, rpcIdentity);
+                    inspectBulkOptions(definition, progress, task, operation);
                 } else {
-                    requestBulkResume(definition, progress, rpcIdentity);
+                    requestBulkResume(definition, progress, operation);
                 }
                 return;
             }
-            if (current.stage !== 'inspecting' && !isBtPayloadTask(task)) {
+            if (!isBtPayloadTask(task)) {
                 if (task.status === 'paused' && current.pauseOwned) {
-                    beginBulkResume(definition, progress, 'failed', rpcIdentity);
+                    beginBulkResume(definition, progress, 'failed', operation);
                 } else if (task.status === 'paused') {
                     aria2TaskService.getTaskOptions(task.gid, function (optionsResponse) {
-                        if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                            finishBulkTick(rpcIdentity);
+                        if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                            finishBulkTick(operation);
                             return;
                         }
                         if (optionsResponse && optionsResponse.success) {
-                            restoreBulkOptions(definition, progress, task, optionsResponse.data || {}, rpcIdentity);
+                            restoreBulkOptions(definition, progress, task, optionsResponse.data || {}, operation);
                         } else if (isNotFoundResponse(optionsResponse)) {
-                            settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                            settleBulkCurrent(definition, progress, 'skipped', operation);
                         } else {
-                            finishBulkTick(rpcIdentity);
+                            finishBulkTick(operation);
                         }
                     }, true);
                 } else {
-                    settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                    settleBulkCurrent(definition, progress, 'skipped', operation);
                 }
-                return;
-            }
-            if (current.stage === 'inspecting' &&
-                (isTaskOwnedByAutomaticJob(task,
-                    getAutomaticOwnedGids(getOperationRpcIdentity(rpcIdentity))) ||
-                    !isActiveBtPayloadTask(task))) {
-                settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
-                return;
-            }
-            if (current.stage !== 'inspecting' && (!task.bittorrent || !task.bittorrent.info ||
-                getRealFiles(task.files).length < 1)) {
-                settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
                 return;
             }
             if (current.stage === 'pausing') {
                 if (task.status === 'paused' || task.status === 'active' || task.status === 'waiting') {
-                    inspectBulkOptions(definition, progress, task, rpcIdentity);
+                    inspectBulkOptions(definition, progress, task, operation);
                 } else {
-                    settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                    settleBulkCurrent(definition, progress, 'skipped', operation);
                 }
                 return;
             }
             if (current.stage === 'applying' || current.stage === 'restoring') {
                 if (task.status === 'paused' || task.status === 'active' || task.status === 'waiting') {
-                    inspectBulkOptions(definition, progress, task, rpcIdentity);
+                    inspectBulkOptions(definition, progress, task, operation);
                 } else {
-                    settleBulkCurrent(definition, progress, 'failed', rpcIdentity);
+                    settleBulkCurrent(definition, progress, 'failed', operation);
                 }
                 return;
             }
-            inspectBulkOptions(definition, progress, task, rpcIdentity);
         };
 
-        var processBulkTick = function (definition, progress, rpcIdentity) {
+        var processBulkTick = function (definition, progress, operation) {
             if (!progress.current) {
                 if (progress.cursor >= definition.gids.length) {
-                    completeBulkRun(definition, progress, rpcIdentity);
+                    completeBulkRun(definition, progress, operation);
                     return;
                 }
                 progress.current = {
@@ -2011,7 +2011,7 @@
                 };
                 if (!saveBulkProgresses()) {
                     progress.current = null;
-                    finishBulkTick(rpcIdentity);
+                    finishBulkTick(operation);
                     return;
                 }
                 updateBulkRunningStatus();
@@ -2019,30 +2019,31 @@
 
             if (progress.current.stage === 'inspecting') {
                 aria2TaskService.getTaskOptions(progress.current.gid, function (response) {
-                    if (!isBulkRunOnCurrentRpc(definition, progress, rpcIdentity)) {
-                        finishBulkTick(rpcIdentity);
+                    if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
+                        finishBulkTick(operation);
                         return;
                     }
                     if (!response || !response.success) {
                         if (isNotFoundResponse(response)) {
-                            settleBulkCurrent(definition, progress, 'skipped', rpcIdentity);
+                            settleBulkCurrent(definition, progress, 'skipped', operation);
                         } else {
-                            finishBulkTick(rpcIdentity);
+                            finishBulkTick(operation);
                         }
                         return;
                     }
-                    inspectBulkTaskAfterOptions(definition, progress, response.data || {}, rpcIdentity);
+                    inspectBulkTaskAfterOptions(definition, progress, response.data || {}, operation);
                 }, true);
                 return;
             }
 
             aria2TaskService.getTaskStatus(progress.current.gid, function (response) {
-                processBulkTaskResponse(definition, progress, response, rpcIdentity);
+                processBulkTaskResponse(definition, progress, response, operation);
             }, true);
         };
 
+        // 自动和批量流程共用一把锁并轮流获得执行机会；同一时刻只推进一条 RPC 链。
         var tick = function () {
-            if (tickInProgress) {
+            if (activeOperation !== null) {
                 return;
             }
 
@@ -2053,7 +2054,6 @@
             var bulkProgress = findBulkProgress(rpcIdentity);
             var currentJobs = getCurrentJobs();
             if (currentJobs.length > 0 && (!bulkDefinition || !bulkProgress || automaticJobTurn)) {
-                tickInProgress = true;
                 activeOperation = operation;
                 if (bulkDefinition && bulkProgress) {
                     automaticJobTurn = false;
@@ -2067,12 +2067,12 @@
             }
             if (bulkDefinition && bulkProgress) {
                 automaticJobTurn = currentJobs.length > 0;
-                tickInProgress = true;
                 activeOperation = operation;
                 processBulkTick(bulkDefinition, bulkProgress, operation);
             }
         };
 
+        // 提交时冻结 GID 列表和阈值，同一 RPC 只允许一个批次；两份存储任一失败都不能当作提交成功。
         var enqueueBulk = function (gids, thresholdBytes) {
             var rpcIdentity = getCurrentRpcIdentity();
             if (findBulkDefinition(rpcIdentity) || !Array.isArray(gids) ||
@@ -2189,6 +2189,7 @@
             return pollingPromise;
         };
 
+        // 停止轮询并使旧回调失效，但保留持久化队列，重连或重新启动后仍可恢复。
         var stop = function () {
             lifecycleGeneration++;
             if (pollingPromise) {
@@ -2196,13 +2197,13 @@
                 pollingPromise = null;
             }
 
-            tickInProgress = false;
             activeOperation = null;
             pollCursor = 0;
             setIdleStatus();
             setBulkIdleStatus();
         };
 
+        // 徽标来自协调器当前操作而非 aria2 下载状态；停止后返回空表，由界面清除旧徽标。
         var buildPendingGidStageMap = function () {
             var map = {};
             if (!pollingPromise) {
@@ -2220,7 +2221,7 @@
                 }
             }
 
-            var bulkProgress = pollingPromise ? findBulkProgress(getCurrentRpcIdentity()) : null;
+            var bulkProgress = findBulkProgress(getCurrentRpcIdentity());
             if (bulkProgress && bulkProgress.current) {
                 var bulkStageMap = {
                     inspecting: 'bulk-inspecting',

@@ -1,3 +1,4 @@
+// 覆盖全量/增量回包乱序和模式切换；模板还经实际压缩器处理，避免插值在发布构建中失效。
 'use strict';
 
 const assert = require('assert');

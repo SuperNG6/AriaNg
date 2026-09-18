@@ -9,7 +9,7 @@
             scope: {
                 setting: '='
             },
-            link: function (scope, element, attrs) {
+            link: function (scope, element) {
                 scope.context = {
                     isLoading: false,
                     availableOptions: [],

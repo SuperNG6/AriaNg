@@ -5,6 +5,7 @@
         title: 'AriaNg',
         appPrefix: 'AriaNg',
         optionStorageKey: 'Options',
+        // 自动队列、批次定义和执行进度分别持久化；修改这些键会影响未完成任务的刷新恢复。
         btFileFilterQueueStorageKey: 'BtFileFilterQueue',
         btFileFilterBulkQueueStorageKey: 'BtFileFilterBulkQueue',
         btFileFilterBulkProgressStorageKey: 'BtFileFilterBulkProgress',

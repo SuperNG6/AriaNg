@@ -9,7 +9,7 @@ on:
       version:
         description: Version to release (without a v prefix)
         required: true
-        default: '2.2.2'
+        default: '2.2.3'
         type: string
 
 permissions:
@@ -48,6 +48,7 @@ jobs:
       - name: Validate release translations
         run: npm run test:i18n-release
 
+      # 发布前校验版本、远端标签和说明文件；手动输入通过环境变量传入脚本，避免拼接成 shell 代码。
       - name: Validate version and release state
         shell: bash
         env:
@@ -105,6 +106,7 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "RELEASE_NOTES_FILE=$RELEASE_NOTES_FILE" >> "$GITHUB_ENV"
 
+      # 两种构建共享 dist，必须先归档标准版，再清理并构建单文件版。
       - name: Build standard archive
         shell: bash
         run: |
@@ -126,6 +128,7 @@ jobs:
             zip -qr "../release/AriaNg-${VERSION}-AllInOne.zip" .
           )
 
+      # 上传前同时检查 ZIP 完整性和内容结构，防止空包或单文件包残留外部资源。
       - name: Validate archives
         shell: bash
         run: |

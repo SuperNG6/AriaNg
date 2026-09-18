@@ -67,7 +67,7 @@
                     callback();
                 }
             });
-        }
+        };
 
         return {
             getFullPageUrl: function () {
@@ -131,6 +131,7 @@
 
                 if (text) {
                     text = ariaNgLocalizationService.getLocalizedText(text, extendSettings.textParams);
+                    // 多行展示仅对显式启用的确认框转换文本换行，翻译仍按纯文本展示，不作为 HTML 注入。
                     if (extendSettings.multilineText) {
                         text = text.replace(/\\n/g, '\n');
                     }

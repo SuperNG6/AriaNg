@@ -120,7 +120,7 @@
                 return;
             }
 
-            var processError = function (message) {
+            var processError = function () {
                 $interval.cancel(downloadTaskRefreshPromise);
             };
 
@@ -197,7 +197,7 @@
             }
 
             if (node.subDirs && node.subDirs.length) {
-                for (var i = 0; i < node.subDirs.length; i++) {
+                for (i = 0; i < node.subDirs.length; i++) {
                     var dirNode = node.subDirs[i];
                     setSelectedNode(dirNode, value);
                 }
@@ -223,7 +223,7 @@
             }
 
             if (node.subDirs && node.subDirs.length) {
-                for (var i = 0; i < node.subDirs.length; i++) {
+                for (i = 0; i < node.subDirs.length; i++) {
                     var dirNode = node.subDirs[i];
                     updateDirNodeSelectedStatus(dirNode);
                     selectedSubNodesCount += (dirNode.selected ? 1 : 0);
@@ -433,9 +433,9 @@
                 }
             }
 
-            for (var i = 0; i < fileIndexes.length; i++) {
+            for (i = 0; i < fileIndexes.length; i++) {
                 var index = fileIndexes[i];
-                var file = files[index];
+                file = files[index];
 
                 if (file && !file.isDir) {
                     file.selected = !isAllSelected;
@@ -520,9 +520,9 @@
                 var allExtensions = ariaNgFileTypes[type].extensions;
                 var extensions = [];
 
-                for (var i = 0; i < allExtensions.length; i++) {
-                    var extension = allExtensions[i];
-                    var extensionInfo = extensionsMap[extension];
+                for (i = 0; i < allExtensions.length; i++) {
+                    extension = allExtensions[i];
+                    extensionInfo = extensionsMap[extension];
 
                     if (extensionInfo) {
                         extensionInfo.classified = true;
@@ -540,12 +540,12 @@
 
             var unClassifiedExtensions = [];
 
-            for (var extension in extensionsMap) {
+            for (extension in extensionsMap) {
                 if (!extensionsMap.hasOwnProperty(extension)) {
                     continue;
                 }
 
-                var extensionInfo = extensionsMap[extension];
+                extensionInfo = extensionsMap[extension];
 
                 if (!extensionInfo.classified) {
                     unClassifiedExtensions.push(extensionInfo);
@@ -593,7 +593,7 @@
             updateAllDirNodesSelectedStatus();
         };
 
-        $('#custom-choose-file-modal').on('hide.bs.modal', function (e) {
+        $('#custom-choose-file-modal').on('hide.bs.modal', function () {
             $scope.context.fileExtensions = null;
         });
 
@@ -711,7 +711,7 @@
                 clipboard.copyText(info);
             } else {
                 clipboard.copyText(value);
-            };
+            }
         };
 
         if (ariaNgSettingService.getDownloadTaskRefreshInterval() > 0) {

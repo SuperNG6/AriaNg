@@ -1,4 +1,5 @@
 /* new-task-table */
+/* 新建任务表单的布局样式；下载路径控件在窄屏需与提交按钮共同排布，不能只按桌面输入框宽度调整。 */
 .new-task-table {
     margin-left: 15px;
     margin-right: 15px;
