@@ -339,6 +339,9 @@ const loadFilterService = function (options) {
         'aria2TaskService': {
             getTaskStatus: function (gid, callback) {
                 statusGids.push(gid);
+                if (options.requestStatus) {
+                    return options.requestStatus(gid, callback);
+                }
                 if (options.deferStatus) {
                     pendingStatusCallbacks.push({gid: gid, callback: callback});
                     return;
@@ -3002,7 +3005,7 @@ test('exposes the current bulk task, stage, threshold, and badge mapping while a
     assert.strictEqual(context.service.getPendingGidStageMap().bulk, undefined);
 });
 
-test('force-pauses an active bulk task when its option change does not converge', function () {
+test('retries and fails an unconverged active bulk task without force-pausing it', function () {
     const task = createActiveBtPayload('one', [
         {index: '1', length: '20', selected: 'true'},
         {index: '2', length: '200', selected: 'true'}
@@ -3017,14 +3020,33 @@ test('force-pauses an active bulk task when its option change does not converge'
     context.service.start();
     context.tickMany(20);
 
-    assert(context.pausedGids.length >= 1);
-    assert(context.pausedGids.every(function (gid) { return gid === 'one'; }));
+    assert.deepStrictEqual(context.pausedGids, []);
+    assert.deepStrictEqual(context.startedGids, []);
     assert(context.changedOptions.length >= 1);
-    assert(context.changedOptions.every(function (change) {
-        return change.gid === 'one' && change.options['select-file'] === '2' &&
-            change.options['bt-remove-unselected-file'] === 'true';
-    }));
+    assert(context.changedOptions.every(function (change) { return change.gid === 'one'; }));
     assert.strictEqual(context.service.getBulkStatus().filtered, 0);
+});
+
+test('accepts delayed bulk convergence without changing the active task status', function () {
+    const task = createActiveBtPayload('one', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const taskOptions = {'bt-remove-unselected-file': 'false'};
+    const context = loadFilterService({tasks: {one: task}, taskOptions: {one: taskOptions},
+        applySuccessfulChanges: false});
+    context.service.enqueueBulk(['one'], 100);
+    context.service.start();
+    context.tickMany(5);
+    assert.strictEqual(context.service.getBulkStatus().filtered, 0);
+    assert.deepStrictEqual(context.pausedGids, []);
+    task.files[0].selected = 'false';
+    taskOptions['bt-remove-unselected-file'] = 'true';
+    context.tickMany(5);
+    assert.strictEqual(context.service.getBulkStatus().filtered, 1);
+    assert.deepStrictEqual(context.pausedGids, []);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(task.status, 'active');
 });
 
 test('does not report filtered when aria2 returns OK without applying select-file', function () {
@@ -3532,40 +3554,54 @@ test('advances a bulk run after one automatic turn even when metadata keeps wait
     }));
 });
 
-['pause', 'resume'].forEach(function (action) {
-    test('an old bulk ' + action + ' callback cannot release the restarted operation', function () {
-        const task = createActiveBtPayload('bulk', [
-            {index: '1', length: '20', selected: 'true'},
-            {index: '2', length: '200', selected: 'true'}
-        ]);
-        const storage = createApplyingBulkStorage('bulk');
-        if (action === 'resume') {
-            task.status = 'paused';
-            storage.savedBulkProgresses[0].current.stage = 'resuming';
-        }
-        const context = loadFilterService(Object.assign(storage, {
-            tasks: {bulk: task}, deferStatus: true, deferPause: true, deferStart: true
-        }));
-        context.service.start();
-        context.tick();
-        context.resolveStatus();
-        assert.strictEqual(action === 'pause' ? context.pausedGids.length : context.startedGids.length, 1);
-        context.service.stop();
-        context.service.start();
-        context.tick();
-        const writes = context.storageSets.length;
-        if (action === 'pause') {
-            context.resolvePause();
-        } else {
-            context.resolveStart();
-        }
-        context.tick();
-        assert.deepStrictEqual(context.statusGids, ['bulk', 'bulk']);
-        assert.strictEqual(context.storageSets.length, writes);
-        assert.strictEqual(context.changedOptions.length, 0);
-        context.resolveStatus();
-        assert.strictEqual(context.service.getBulkStatus().type, 'running');
-    });
+test('an old bulk resume callback cannot release the restarted operation', function () {
+    const task = createActiveBtPayload('bulk', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    task.status = 'paused';
+    const storage = createApplyingBulkStorage('bulk');
+    storage.savedBulkProgresses[0].current.stage = 'resuming';
+    const context = loadFilterService(Object.assign(storage, {
+        tasks: {bulk: task}, deferStatus: true, deferStart: true
+    }));
+    context.service.start();
+    context.tick();
+    context.resolveStatus();
+    assert.strictEqual(context.startedGids.length, 1);
+    context.service.stop();
+    context.service.start();
+    context.tick();
+    const writes = context.storageSets.length;
+    context.resolveStart();
+    context.tick();
+    assert.deepStrictEqual(context.statusGids, ['bulk', 'bulk']);
+    assert.strictEqual(context.storageSets.length, writes);
+    assert.strictEqual(context.changedOptions.length, 0);
+    context.resolveStatus();
+    assert.strictEqual(context.service.getBulkStatus().type, 'running');
+});
+
+test('migrates a legacy bulk pausing checkpoint without another force-pause', function () {
+    const task = createActiveBtPayload('bulk', [
+        {index: '1', length: '20', selected: 'true'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const storage = createApplyingBulkStorage('bulk');
+    storage.savedBulkProgresses[0].current.stage = 'pausing';
+    storage.savedBulkProgresses[0].current.resumeOutcome = 'filtered';
+    const context = loadFilterService(Object.assign(storage, {
+        tasks: {bulk: task}, taskOptions: {bulk: {'bt-remove-unselected-file': 'false'}}
+    }));
+    context.service.start();
+    context.tick();
+    assert.strictEqual(context.getSavedBulkProgresses()[0].current.pauseOwned, false);
+    task.status = 'paused';
+    context.tickMany(10);
+    assert.deepStrictEqual(context.pausedGids, []);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(context.service.getBulkStatus().filtered, 1);
+    assert.strictEqual(task.status, 'paused');
 });
 
 test('ignores an old bulk status callback after stop and keeps the restarted tick locked', function () {
@@ -3908,22 +3944,35 @@ test('automatic restoration waits for observed full selection after a successful
     assert.deepStrictEqual(context.startedGids, []);
 });
 
-test('automatic active recovery resumes its persisted restart pause and confirms the target', function () {
+test('automatic active filtering never force-pauses for option convergence', function () {
     const task = {gid: 'task', status: 'active', bittorrent: {}, files: [
         {index: '1', length: '1', selected: 'true'}, {index: '2', length: '200', selected: 'true'}
     ]};
-    const options = {tasks: {task: task}, taskOptions: {'bt-remove-unselected-file': 'false'},
-        applySuccessfulChanges: false};
+    const context = loadFilterService({tasks: {task: task},
+        taskOptions: {'bt-remove-unselected-file': 'false'}, applySuccessfulChanges: false});
+    context.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'});
+    context.service.start();
+    context.tickUntilIdle();
+    assert.deepStrictEqual(context.pausedGids, []);
+    assert.deepStrictEqual(context.startedGids, []);
+    assert.strictEqual(task.status, 'active');
+    assert.strictEqual(context.service.getStatus().filtered, 0);
+});
+
+test('automatic recovery resumes a pause owned by the previous version', function () {
+    const task = {gid: 'task', status: 'active', bittorrent: {}, files: [
+        {index: '1', length: '1', selected: 'true'}, {index: '2', length: '200', selected: 'true'}
+    ]};
+    const options = {tasks: {task: task}, taskOptions: {'bt-remove-unselected-file': 'false'}};
     const first = loadFilterService(options);
     first.service.enqueue('task', {thresholdBytes: 100, startAfterFilter: true, sourceType: 'torrent'});
     first.service.start();
-    first.tickMany(5);
-    assert.deepStrictEqual(first.pausedGids, ['task']);
-    assert.strictEqual(task.status, 'paused');
-    assert.strictEqual(first.service.getStatus().filtered, 0);
-    const restored = loadFilterService(Object.assign({}, options, {
-        applySuccessfulChanges: true, savedQueue: JSON.parse(JSON.stringify(first.getSavedQueue()))
-    }));
+    first.tick();
+    const savedQueue = JSON.parse(JSON.stringify(first.getSavedQueue()));
+    savedQueue[0].pauseOwned = true;
+    savedQueue[0].restartAttempted = true;
+    task.status = 'paused';
+    const restored = loadFilterService(Object.assign({}, options, {savedQueue: savedQueue}));
     restored.service.start();
     restored.tickUntilIdle();
     assert.deepStrictEqual(restored.startedGids, ['task']);
@@ -3964,6 +4013,103 @@ test('automatic InfoHash confirmation preserves a user pause observed after muta
     assert.strictEqual(context.service.getStatus().filtered, 1);
     assert.strictEqual(task.status, 'paused');
     assert.deepStrictEqual(context.startedGids, []);
+});
+
+test('restarts bulk stability observation after reload instead of using persisted verifiedAt', function () {
+    const storage = createApplyingBulkStorage('task');
+    storage.savedBulkProgresses[0].current.verifiedAt = 1000;
+    const task = createActiveBtPayload('task', [
+        {index: '1', length: '20', selected: 'false'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService(Object.assign({now: 100000, tasks: {task: task},
+        taskOptions: {task: {'bt-remove-unselected-file': 'true'}}}, storage));
+    context.service.start();
+    context.tick();
+    assert.strictEqual(context.service.getBulkStatus().type, 'running');
+    context.tickMany(3);
+    assert.strictEqual(context.service.getBulkStatus().type, 'running');
+    context.tick();
+    assert.strictEqual(context.service.getBulkStatus().filtered, 1);
+});
+
+test('restarts bulk stability window after a backward clock jump', function () {
+    const task = createActiveBtPayload('task', [
+        {index: '1', length: '20', selected: 'false'},
+        {index: '2', length: '200', selected: 'true'}
+    ]);
+    const context = loadFilterService(Object.assign({now: 100000, tasks: {task: task},
+        taskOptions: {task: {'bt-remove-unselected-file': 'true'}}}, createApplyingBulkStorage('task')));
+    context.service.start();
+    context.tick();
+    context.setNow(1000);
+    context.tick();
+    assert.strictEqual(context.service.getBulkStatus().type, 'running');
+    context.tickMany(4);
+    assert.strictEqual(context.service.getBulkStatus().filtered, 1);
+});
+
+// 将真实传输服务接到协调器，验证超时失败能释放单飞锁，而迟到回包不会释放下一轮的锁。
+test('WebSocket timeout releases the filter coordinator and late replies cannot settle the next operation', function () {
+    let factory;
+    const deadlines = [];
+    const sent = [];
+    const socket = {
+        readyState: 1,
+        onMessage: function (callback) { this.receive = callback; },
+        onOpen: function () {},
+        onClose: function () {},
+        send: function (body) { sent.push(JSON.parse(body)); }
+    };
+    const timeout = Object.assign(function (callback, delay) {
+        const timer = {callback: callback, delay: delay};
+        deadlines.push(timer);
+        return timer;
+    }, {cancel: function (timer) { timer.cancelled = true; }});
+    vm.runInNewContext(read('src/scripts/services/aria2WebSocketRpcService.js'), {
+        angular: {module: function () { return {factory: function (name, value) { factory = value; }}; },
+            toJson: JSON.stringify, fromJson: JSON.parse, isArray: Array.isArray}
+    });
+    const dependencies = {
+        '$q': {defer: function () { return {promise: {}, resolve: function () {}, reject: function () {}}; }},
+        '$websocket': function () { return socket; },
+        '$timeout': timeout,
+        ariaNgConstants: loadConstants().ariaNgConstants,
+        ariaNgSettingService: {getCurrentRpcUrl: function () { return 'ws://test/jsonrpc'; },
+            getWebSocketReconnectInterval: function () { return 0; }},
+        ariaNgLogService: {debug: function () {}, warn: function () {}}
+    };
+    const transport = factory[factory.length - 1].apply(null, factory.slice(0, -1).map(name => dependencies[name]));
+    let nextId = 0;
+    const context = loadFilterService({requestStatus: function (gid, callback) {
+        const id = String(++nextId);
+        transport.request({id: id, uniqueId: id, requestBody: {id: id, method: 'aria2.tellStatus', params: [gid]},
+            successCallback: function (requestId, data) { callback({success: true, data: data}); },
+            errorCallback: function (requestId, data) { callback({success: false, data: data}); }});
+    }});
+    ['first', 'second'].forEach(gid => context.service.enqueue(gid,
+        {thresholdBytes: 100, startAfterFilter: false, sourceType: 'torrent'}));
+    context.service.start();
+    context.tick();
+    context.tickMany(5);
+    assert.strictEqual(sent.length, 1);
+    assert.strictEqual(deadlines[0].delay, 20000);
+    deadlines[0].callback();
+    context.tick();
+    assert.strictEqual(sent.length, 2);
+    assert.strictEqual(sent[1].params[0], 'second');
+    const reply = id => socket.receive({data: JSON.stringify({id: id, result: {
+        gid: id === '1' ? 'first' : 'second', status: 'paused', bittorrent: {},
+        files: [{index: '1', length: '200', selected: 'true'}]
+    }})});
+    reply('1');
+    context.tick();
+    assert.strictEqual(sent.length, 2, 'late reply must not release the second operation');
+    assert.strictEqual(context.service.getStatus().processed, 0);
+    reply('2');
+    assert.strictEqual(context.service.getStatus().processed, 1);
+    context.tick();
+    assert.strictEqual(sent[2].params[0], 'first', 'timed out task remains queued for reconciliation');
 });
 
 let failed = 0;

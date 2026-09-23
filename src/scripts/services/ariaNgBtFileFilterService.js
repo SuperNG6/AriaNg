@@ -20,7 +20,6 @@
         var missingRootScanLimit = 3;
         var pollingInterval = 250;
         var allowedBulkStages = ['inspecting', 'pausing', 'applying', 'restoring', 'resuming'];
-        var bulkPauseRetryDelay = 30000;
         var bulkMutationRestartDelay = 1000;
         var bulkConvergenceDelay = 1000;
         var bulkMutationRetryLimit = 3;
@@ -114,9 +113,6 @@
             }
             if (job.mutationRequestedAt) {
                 sanitized.mutationRequestedAt = normalizeInteger(job.mutationRequestedAt, 0);
-            }
-            if (job.restartAttempted) {
-                sanitized.restartAttempted = true;
             }
             if (job.pauseOwned) {
                 sanitized.pauseOwned = true;
@@ -215,12 +211,11 @@
                 stage: current.stage,
                 retryCount: normalizeInteger(current.retryCount, 0),
                 restoreRetryCount: normalizeInteger(current.restoreRetryCount, 0),
-                pauseRetryCount: normalizeInteger(current.pauseRetryCount, 0),
-                pauseRequestedAt: normalizeInteger(current.pauseRequestedAt, 0),
                 pauseOwned: current.pauseOwned === true || current.stage === 'pausing' ||
                     current.stage === 'resuming',
                 mutationRequestedAt: normalizeInteger(current.mutationRequestedAt, 0),
-                verifiedAt: normalizeInteger(current.verifiedAt, 0),
+                // 页面离开期间没有连续观察，不能沿用落盘的稳定时间。
+                verifiedAt: 0,
                 resumeRetryCount: normalizeInteger(current.resumeRetryCount, 0),
                 resumeOutcome: current.resumeOutcome === 'filtered' ? 'filtered' : 'failed',
                 filteredFileCount: normalizeInteger(current.filteredFileCount, 0)
@@ -993,26 +988,14 @@
             return Date.now() - job.verifiedAt >= bulkConvergenceDelay;
         };
 
-        // 写入后先等待收敛；需要暂停促使生效时，先记录暂停归属，再发 RPC，刷新后才能补偿恢复。
-        var waitForAutomaticMutation = function (job, task, operation) {
+        // aria2.changeOption 自行处理活动任务的重启；这里仅等待读回，不主动暂停任务。
+        var waitForAutomaticMutation = function (job, operation) {
             if (job.mutationRequestedAt > Date.now()) {
                 job.mutationRequestedAt = Date.now();
             }
             if (job.verifiedAt || (job.mutationRequestedAt &&
                 Date.now() - job.mutationRequestedAt < bulkMutationRestartDelay)) {
                 finishTick(operation);
-                return true;
-            }
-            // An active payload may need a restart boundary, as with bulk filtering.
-            // Persist ownership before pausing, so reload can safely resume our pause.
-            if (job.mutationRequestedAt && task.status === 'active' && !job.restartAttempted) {
-                job.restartAttempted = true;
-                job.pauseOwned = true;
-                job.mutationRequestedAt = Date.now();
-                touchAndSave(job);
-                aria2TaskService.pauseTasks([task.gid], function () {
-                    finishTick(operation);
-                }, true);
                 return true;
             }
             return false;
@@ -1052,7 +1035,7 @@
                     return;
                 }
 
-                if (waitForAutomaticMutation(job, task, operation)) {
+                if (waitForAutomaticMutation(job, operation)) {
                     return;
                 }
                 job.restoreAttempted = true;
@@ -1114,7 +1097,7 @@
                     return;
                 }
 
-                if (waitForAutomaticMutation(job, task, operation)) {
+                if (waitForAutomaticMutation(job, operation)) {
                     return;
                 }
 
@@ -1123,7 +1106,6 @@
                     job.restoreAttempted = false;
                     job.restorationOutcome = 'fallback';
                     job.mutationRequestedAt = 0;
-                    job.restartAttempted = false;
                     job.verifiedAt = 0;
                     touchAndSave(job);
                     processRestoration(job, task, plan, operation);
@@ -1634,59 +1616,7 @@
             }, true);
         };
 
-        // 暂停归属先落盘；只有本流程造成的暂停才允许后续恢复，用户原有暂停不能被抢走。
-        var requestBulkPause = function (definition, progress, operation) {
-            if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
-                finishBulkTick(operation);
-                return;
-            }
-            var current = progress.current;
-            if (current.pauseRetryCount >= bulkMutationRetryLimit) {
-                settleBulkCurrent(definition, progress, 'failed', operation);
-                return;
-            }
-            var previousPauseRetryCount = current.pauseRetryCount;
-            var previousPauseRequestedAt = current.pauseRequestedAt;
-            var previousPauseOwned = current.pauseOwned;
-            current.pauseRetryCount++;
-            current.pauseRequestedAt = Date.now();
-            current.pauseOwned = true;
-            if (!saveBulkProgresses()) {
-                current.pauseRetryCount = previousPauseRetryCount;
-                current.pauseRequestedAt = previousPauseRequestedAt;
-                current.pauseOwned = previousPauseOwned;
-                finishBulkTick(operation);
-                return;
-            }
-            updateBulkRunningStatus();
-            aria2TaskService.pauseTasks([current.gid], function () {
-                finishBulkTick(operation);
-            }, true);
-        };
-
-        var beginBulkPause = function (definition, progress, outcome, operation) {
-            var current = progress.current;
-            var previousStage = current.stage;
-            var previousResumeOutcome = current.resumeOutcome;
-            var previousPauseRetryCount = current.pauseRetryCount;
-            var previousPauseRequestedAt = current.pauseRequestedAt;
-            current.stage = 'pausing';
-            current.resumeOutcome = outcome;
-            current.pauseRetryCount = 0;
-            current.pauseRequestedAt = 0;
-            current.verifiedAt = 0;
-            if (!saveBulkProgresses()) {
-                current.stage = previousStage;
-                current.resumeOutcome = previousResumeOutcome;
-                current.pauseRetryCount = previousPauseRetryCount;
-                current.pauseRequestedAt = previousPauseRequestedAt;
-                finishBulkTick(operation);
-                return;
-            }
-            updateBulkRunningStatus();
-            requestBulkPause(definition, progress, operation);
-        };
-
+        // 仅兼容旧版本已落盘的暂停归属；新批量任务不会主动暂停。
         var requestBulkResume = function (definition, progress, operation) {
             if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
                 finishBulkTick(operation);
@@ -1813,8 +1743,6 @@
             current.targetRemoveUnselectedFile = plan.originalSelectedIndexes.length === plan.allIndexes.length ?
                 'true' : originalCleanup;
             current.filteredFileCount = plan.filteredFileCount;
-            current.pauseRetryCount = 0;
-            current.pauseRequestedAt = 0;
             current.pauseOwned = false;
             current.resumeRetryCount = 0;
             current.resumeOutcome = 'filtered';
@@ -1840,7 +1768,7 @@
             }, true);
         };
 
-        // 写入阶段按回读状态推进；选择与清理选项稳定后，还要完成属于本流程的恢复启动才能结算。
+        // 写入阶段按回读状态推进；旧检查点若拥有暂停归属，先恢复再结算。
         var inspectBulkOptions = function (definition, progress, task, operation) {
             aria2TaskService.getTaskOptions(task.gid, function (response) {
                 if (!isBulkRunOnCurrentRpc(definition, progress, operation)) {
@@ -1873,7 +1801,8 @@
                         } else {
                             settleBulkCurrent(definition, progress, outcome, operation);
                         }
-                    } else if (!current.verifiedAt) {
+                    } else if (!current.verifiedAt || Date.now() < current.verifiedAt) {
+                        // 时钟回拨后重新计时，避免等待旧的未来时间戳。
                         current.verifiedAt = Date.now();
                         if (!saveBulkProgresses()) {
                             current.verifiedAt = 0;
@@ -1886,29 +1815,16 @@
                     current.verifiedAt = 0;
                     if (Date.now() - current.mutationRequestedAt < bulkMutationRestartDelay) {
                         finishBulkTick(operation);
-                    } else if (task.status === 'paused') {
-                        if (current.pauseOwned) {
-                            beginBulkResume(definition, progress, outcome, operation);
-                        } else if (outcome === 'filtered') {
-                            beginBulkRestoration(definition, progress, task, options, operation);
-                        } else {
-                            restoreBulkOptions(definition, progress, task, options, operation);
-                        }
+                    } else if (task.status === 'paused' && current.pauseOwned) {
+                        beginBulkResume(definition, progress, outcome, operation);
+                    } else if (outcome === 'filtered' && current.retryCount >= bulkMutationRetryLimit) {
+                        beginBulkRestoration(definition, progress, task, options, operation);
+                    } else if (outcome === 'filtered') {
+                        applyBulkOptions(definition, progress, task, operation);
+                    } else if (current.restoreRetryCount >= bulkMutationRetryLimit) {
+                        settleBulkCurrent(definition, progress, 'failed', operation);
                     } else {
-                        beginBulkPause(definition, progress, outcome, operation);
-                    }
-                } else if (current.stage === 'pausing') {
-                    current.verifiedAt = 0;
-                    if (task.status === 'paused') {
-                        if (Date.now() - current.pauseRequestedAt < bulkMutationRestartDelay) {
-                            finishBulkTick(operation);
-                        } else {
-                            beginBulkResume(definition, progress, outcome, operation);
-                        }
-                    } else if (Date.now() - current.pauseRequestedAt >= bulkPauseRetryDelay) {
-                        requestBulkPause(definition, progress, operation);
-                    } else {
-                        finishBulkTick(operation);
+                        restoreBulkOptions(definition, progress, task, options, operation);
                     }
                 } else if (outcome === 'filtered') {
                     if (current.retryCount >= bulkMutationRetryLimit) {
@@ -1973,6 +1889,20 @@
             }
             if (current.stage === 'pausing') {
                 if (task.status === 'paused' || task.status === 'active' || task.status === 'waiting') {
+                    // 旧版暂停检查点改走普通回读；只保留已观察到的暂停归属。
+                    var previousPauseOwned = current.pauseOwned;
+                    if (task.status !== 'paused') {
+                        // 刷新后旧暂停 RPC 不会再到达；活动任务不能占用未来的用户暂停。
+                        current.pauseOwned = false;
+                    }
+                    current.stage = current.resumeOutcome === 'filtered' ? 'applying' : 'restoring';
+                    current.verifiedAt = 0;
+                    if (!saveBulkProgresses()) {
+                        current.stage = 'pausing';
+                        current.pauseOwned = previousPauseOwned;
+                        finishBulkTick(operation);
+                        return;
+                    }
                     inspectBulkOptions(definition, progress, task, operation);
                 } else {
                     settleBulkCurrent(definition, progress, 'skipped', operation);
@@ -2000,8 +1930,6 @@
                     stage: 'inspecting',
                     retryCount: 0,
                     restoreRetryCount: 0,
-                    pauseRetryCount: 0,
-                    pauseRequestedAt: 0,
                     pauseOwned: false,
                     mutationRequestedAt: 0,
                     verifiedAt: 0,

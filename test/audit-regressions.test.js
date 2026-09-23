@@ -75,7 +75,19 @@ test('never replays a rejected queued write after reconnect using the real webso
     });
     const sockets = [];
     const timers = [];
-    const timeout = (callback) => { timers.push(callback); return callback; };
+    const timeout = (callback, delay) => {
+        callback.delay = delay;
+        timers.push(callback);
+        return callback;
+    };
+    timeout.cancel = handle => { handle.cancelled = true; };
+    const runNextTimer = () => {
+        timers.sort((a, b) => (a.delay || 0) - (b.delay || 0));
+        let timer;
+        do { timer = timers.shift(); } while (timer && timer.cancelled);
+        assert(timer, 'expected a pending timer');
+        timer();
+    };
     const q = trackedQ();
     const backend = {create: () => {
         const socket = {readyState: 0, bufferedAmount: 0, sent: [],
@@ -93,7 +105,7 @@ test('never replays a rejected queued write after reconnect using the real webso
     const websocket = definition[definition.length - 1]({$digest: noop}, q, timeout, backend);
     const service = loadFactory('src/scripts/services/aria2WebSocketRpcService.js', {
         '$q': q, '$websocket': websocket, '$timeout': timeout,
-        ariaNgConstants: {}, ariaNgLogService: log,
+        ariaNgConstants: {webSocketRequestTimeout: 20000}, ariaNgLogService: log,
         ariaNgSettingService: {
             getCurrentRpcUrl: () => 'ws://audit.invalid/jsonrpc',
             getWebSocketReconnectInterval: () => 500
@@ -105,9 +117,9 @@ test('never replays a rejected queued write after reconnect using the real webso
         method: 'aria2.addUri', params: [['magnet:?xt=urn:btih:' + 'a'.repeat(40)], {'pause-metadata': 'true'}]},
     errorCallback: () => failures++, successCallback: () => successes++});
     sockets[0].close();
-    timers.shift()(); // App rejects pending requests and initiates reconnect.
+    runNextTimer(); // App rejects pending requests and initiates reconnect.
     assert.strictEqual(failures, 1);
-    timers.shift()(); // Dependency creates the replacement socket.
+    runNextTimer(); // Dependency creates the replacement socket.
     sockets[1].readyState = 1;
     sockets[1].onopen({}); // The dependency must have no rejected write left to flush.
     assert.strictEqual(sockets[1].sent.length, 0);

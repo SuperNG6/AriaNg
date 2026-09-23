@@ -12,6 +12,7 @@
 
         var sendIdStates = {};
         var eventCallbacks = {};
+        var responseGeneration = 0;
 
         // Keep unsent requests here, not in angular-websocket's reconnect queue.
         // Rejecting our callback must also prevent a later network mutation.
@@ -38,68 +39,49 @@
             }
         };
 
-        // 先移除请求再通知调用者，迟到响应不再重复结算；这并不撤销服务器已收到的写操作。
+        // 先移除请求并取消期限，再调用业务回调；超时、断线和迟到响应只能结算一次。
+        var takePendingRequest = function (uniqueId) {
+            var state = sendIdStates[uniqueId];
+            if (state) {
+                delete sendIdStates[uniqueId];
+                $timeout.cancel(state.timeout);
+            }
+            return state;
+        };
+
+        var failRequest = function (uniqueId, timedOut) {
+            var state = takePendingRequest(uniqueId);
+            if (!state) {
+                return;
+            }
+            var context = state.context;
+            state.deferred.reject({success: false, context: context});
+            // A deadline without any newer RPC reply means the open socket is not usable.
+            // An unrelated stalled request must not override a later healthy reply.
+            if (timedOut && state.responseGeneration === responseGeneration && socketClient &&
+                (socketClient.readyState === websocketStatusConnecting ||
+                    socketClient.readyState === websocketStatusOpen) && context.connectionFailedCallback) {
+                context.connectionFailedCallback({rpcUrl: rpcUrl});
+            }
+            if (context.errorCallback) {
+                ariaNgLogService.debug('[aria2WebSocketRpcService.failRequest] request failed', context);
+                context.errorCallback(context.id, {message: 'Cannot connect to aria2!'});
+            }
+        };
+
         var rejectPendingRequests = function () {
             for (var uniqueId in sendIdStates) {
-                if (!sendIdStates.hasOwnProperty(uniqueId)) {
-                    continue;
-                }
-
-                var state = sendIdStates[uniqueId];
-
-                if (!state) {
-                    delete sendIdStates[uniqueId];
-                    continue;
-                }
-
-                delete sendIdStates[uniqueId];
-
-                state.deferred.reject({
-                    success: false,
-                    context: state.context
-                });
-
-                ariaNgLogService.debug('[aria2WebSocketRpcService.rejectPendingRequests] reject pending request', state.context);
-
-                if (state.context.errorCallback) {
-                    state.context.errorCallback(state.context.id, { message: 'Cannot connect to aria2!' });
+                if (sendIdStates.hasOwnProperty(uniqueId)) {
+                    failRequest(uniqueId);
                 }
             }
         };
 
         var processRequestFailed = function (request) {
             var content = angular.fromJson(request);
-
-            if (!content) {
-                return;
+            if (content && content.id) {
+                failRequest(content.id);
             }
-
-            var uniqueId = content.id;
-
-            if (!uniqueId) {
-                return;
-            }
-
-            var state = sendIdStates[uniqueId];
-
-            if (!state) {
-                return;
-            }
-
-            var context = state.context;
-
-            state.deferred.reject({
-                success: false,
-                context: context
-            });
-
-            if (context.errorCallback) {
-                ariaNgLogService.debug('[aria2WebSocketRpcService.processRequestFailed] ' + (context && context.requestBody && context.requestBody.method ? context.requestBody.method + ' ' : '') + 'request failed');
-
-                context.errorCallback(context.id, { message: 'Cannot connect to aria2!' });
-            }
-
-            delete sendIdStates[uniqueId];
         };
 
         var processMethodCallback = function (content) {
@@ -109,13 +91,14 @@
                 return;
             }
 
-            var state = sendIdStates[uniqueId];
+            var state = takePendingRequest(uniqueId);
 
             if (!state) {
                 return;
             }
 
             var context = state.context;
+            responseGeneration++;
 
             state.deferred.resolve({
                 success: true,
@@ -139,8 +122,6 @@
 
                 context.errorCallback(context.id, content.error);
             }
-
-            delete sendIdStates[uniqueId];
         };
 
         var processEventCallback = function (content) {
@@ -307,7 +288,13 @@
                     sendIdStates[uniqueId] = {
                         context: context,
                         deferred: deferred,
-                        sent: false
+                        sent: false,
+                        responseGeneration: responseGeneration,
+                        // 连接中等待发送也计入期限。超时只报告失败，不重放可能已执行的写操作；
+                        // 过滤协调器收到失败后释放当前轮次，再通过回读服务器状态决定下一步。
+                        timeout: $timeout(function () {
+                            failRequest(uniqueId, true);
+                        }, ariaNgConstants.webSocketRequestTimeout)
                     };
 
                     sendRequest(sendIdStates[uniqueId]);

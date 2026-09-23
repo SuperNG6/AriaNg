@@ -19,6 +19,7 @@
         defaultSecureProtocol: 'https',
         defaultPathSeparator: '/',
         httpRequestTimeout: 20000,
+        webSocketRequestTimeout: 20000,
         globalStatStorageCapacity: 120,
         taskStatStorageCapacity: 300,
         lazySaveTimeout: 500,
