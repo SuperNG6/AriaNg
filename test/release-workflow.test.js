@@ -34,7 +34,7 @@ assert(fs.existsSync('docs/releases/' + packageJson.version + '.md'), 'release n
     'AriaNg-${VERSION}-AllInOne.zip',
     '--verify-tag',
     '--target "$GITHUB_SHA"',
-    '--notes-file "$RELEASE_NOTES_FILE"',
+    '--notes-file "$RELEASE_BODY_FILE"',
     'docs/releases/${VERSION}.md',
     'GH_TOKEN: ${{ github.token }}',
     'persist-credentials: false',
@@ -77,5 +77,4 @@ assert(validateStep.includes('RELEASE_INPUT_VERSION: ${{ inputs.version }}'), 'm
 assert(validateRun.includes('VERSION="$RELEASE_INPUT_VERSION"'), 'version validation must read the manual input from the environment');
 assert(validateRun.includes('"$GITHUB_EVENT_NAME"'), 'version validation must read the event name from the runner environment');
 assert(!validateRun.includes('${{'), 'version validation run block must not interpolate GitHub expressions into Bash');
-
 console.log('PASS release workflow contract');

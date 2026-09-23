@@ -103,8 +103,15 @@ jobs:
             exit 1
           fi
 
+          RELEASE_BODY_FILE="$RUNNER_TEMP/release-notes.md"
+          if [[ "$(head -n 1 "$RELEASE_NOTES_FILE")" == "# AriaNg ${VERSION}" ]]; then
+            sed '1d; /./,$!d' "$RELEASE_NOTES_FILE" > "$RELEASE_BODY_FILE"
+          else
+            cp "$RELEASE_NOTES_FILE" "$RELEASE_BODY_FILE"
+          fi
+
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "RELEASE_NOTES_FILE=$RELEASE_NOTES_FILE" >> "$GITHUB_ENV"
+          echo "RELEASE_BODY_FILE=$RELEASE_BODY_FILE" >> "$GITHUB_ENV"
 
       # 两种构建共享 dist，必须先归档标准版，再清理并构建单文件版。
       - name: Build standard archive
@@ -176,7 +183,7 @@ jobs:
             "release/AriaNg-${VERSION}-AllInOne.zip" \
             --verify-tag \
             --title "AriaNg ${VERSION}" \
-            --notes-file "$RELEASE_NOTES_FILE"
+            --notes-file "$RELEASE_BODY_FILE"
 
       - name: Create tag and publish manual release
         if: github.event_name == 'workflow_dispatch'
@@ -187,4 +194,4 @@ jobs:
             "release/AriaNg-${VERSION}-AllInOne.zip" \
             --target "$GITHUB_SHA" \
             --title "AriaNg ${VERSION}" \
-            --notes-file "$RELEASE_NOTES_FILE"
+            --notes-file "$RELEASE_BODY_FILE"
