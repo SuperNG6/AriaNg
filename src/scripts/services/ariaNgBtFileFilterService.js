@@ -1153,8 +1153,8 @@
                 }, true);
                 return;
             }
-            if (job.pauseOwned && job.resumeRequested &&
-                (task.status === 'active' || task.status === 'waiting')) {
+            // 已观察到运行状态，旧暂停归属就已失效，不能接管之后的用户暂停。
+            if (job.pauseOwned && (task.status === 'active' || task.status === 'waiting')) {
                 job.pauseOwned = false;
                 job.resumeRequested = false;
                 touchAndSave(job);
@@ -1813,6 +1813,14 @@
                     }
                 } else if (current.stage === 'applying' || current.stage === 'restoring') {
                     current.verifiedAt = 0;
+                    // 回拨后重新等待一次重试间隔，不能被落盘的未来写入时间长时间阻塞。
+                    if (current.mutationRequestedAt > Date.now()) {
+                        current.mutationRequestedAt = Date.now();
+                        if (!saveBulkProgresses()) {
+                            finishBulkTick(operation);
+                            return;
+                        }
+                    }
                     if (Date.now() - current.mutationRequestedAt < bulkMutationRestartDelay) {
                         finishBulkTick(operation);
                     } else if (task.status === 'paused' && current.pauseOwned) {
