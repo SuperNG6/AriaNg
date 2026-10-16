@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    angular.module('ariaNg').directive('ngSetting', ['$timeout', '$q', 'ariaNgConstants', 'ariaNgLocalizationService', 'ariaNgKeyboardService', 'aria2SettingService', function ($timeout, $q, ariaNgConstants, ariaNgLocalizationService, ariaNgKeyboardService, aria2SettingService) {
+    angular.module('ariaNg').directive('ngSetting', ['$timeout', '$q', 'ariaNgConstants', 'ariaNgLocalizationService', 'ariaNgKeyboardService', 'ariaNgSettingService', 'aria2SettingService', function ($timeout, $q, ariaNgConstants, ariaNgLocalizationService, ariaNgKeyboardService, ariaNgSettingService, aria2SettingService) {
         return {
             restrict: 'E',
             templateUrl: 'views/setting.html',
@@ -33,7 +33,11 @@
                         return;
                     }
 
-                    scope.history = aria2SettingService.getSettingHistory(scope.option.key);
+                    scope.history = aria2SettingService.getSettingHistory(scope.option.key, ariaNgSettingService.getCurrentRpcIdentity());
+
+                    if (!scope.history.length) {
+                        scope.history = aria2SettingService.getSettingHistory(scope.option.key);
+                    }
                 };
 
                 var destroyTooltip = function () {

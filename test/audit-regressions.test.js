@@ -218,6 +218,72 @@ test('retries each batch item once and finishes only after all input items settl
     assert.strictEqual(summary.failedCount, 1);
 });
 
+function loadBatchRpc() {
+    const requests = [];
+    const transport = {on: noop, request: (context) => { requests.push(context); return Promise.resolve(); }};
+    const service = loadFactory('src/scripts/services/aria2RpcService.js', {
+        '$location': {path: () => '/new'}, '$q': {all: Promise.all.bind(Promise)},
+        aria2RpcConstants: {rpcSystemServiceName: 'system', rpcServiceName: 'aria2', rpcServiceVersion: '2.0', rpcTokenPrefix: 'token:'},
+        aria2RpcErrors: {}, aria2AllOptions: {}, ariaNgLogService: log,
+        ariaNgCommonService: {generateUniqueId: () => 'batch', showError: noop},
+        ariaNgSettingService: {isCurrentRpcUseWebSocket: () => false, getCurrentRpcSecret: () => 'test-secret', getCurrentRpcDisplayName: () => 'test'},
+        aria2HttpRpcService: transport
+    });
+    return {service, requests};
+}
+
+test('multicall preserves per-task context and success for BT filtering after partial failure', function () {
+    const {service, requests} = loadBatchRpc();
+    const tasks = [{options: {}, urls: ['magnet:?xt=test'], btFileFilterCandidate: true, pauseOnAdded: false},
+        {options: {}, urls: ['https://example.invalid/file'], pauseOnAdded: true}];
+    let summary;
+    service.addUriMulti({tasks, callback: (response) => { summary = response; }});
+    assert.strictEqual(requests.length, 1);
+    const body = requests[0].requestBody;
+    assert.strictEqual(body.method, 'system.multicall');
+    assert.strictEqual(body.params.length, 1);
+    assert.strictEqual(body.params[0][0].params[0], 'token:test-secret');
+    assert.strictEqual(body.params[0][0].params[2].pause, undefined);
+    assert.strictEqual(body.params[0][1].params[2].pause, 'true');
+    requests[0].successCallback('batch', [['magnet-gid'], {code: 1, message: 'failed'}]);
+    assert.strictEqual(summary.hasSuccess, true);
+    assert.strictEqual(summary.hasError, true);
+    assert.strictEqual(summary.results.length, 2);
+    assert.strictEqual(summary.results[0].success, true);
+    assert.strictEqual(summary.results[0].data, 'magnet-gid');
+    assert.strictEqual(summary.results[0].context.task, tasks[0]);
+    assert.strictEqual(summary.results[1].success, false);
+    assert.strictEqual(summary.results[1].context.task, tasks[1]);
+});
+
+test('multicall reports all-fault and transport failures without claiming success', function () {
+    for (const transportFailure of [false, true]) {
+        const {service, requests} = loadBatchRpc();
+        let summary;
+        service.unpauseMulti({gids: ['one', 'two'], silent: true, callback: (response) => { summary = response; }});
+        const fault = {code: 1, message: 'failed'};
+        if (transportFailure) {
+            requests[0].errorCallback('batch', fault);
+        } else {
+            requests[0].successCallback('batch', [fault, fault]);
+        }
+        assert.strictEqual(summary.hasSuccess, false);
+        assert.strictEqual(summary.hasError, true);
+        assert.strictEqual(summary.results.length, 2);
+        assert.strictEqual(summary.results[1].context.gid, 'two');
+    }
+});
+
+test('empty multicall settles without sending an RPC request', async function () {
+    const {service, requests} = loadBatchRpc();
+    let summary;
+    await service.unpauseMulti({gids: [], callback: (response) => { summary = response; }});
+    assert.strictEqual(requests.length, 0);
+    assert.strictEqual(summary.hasSuccess, false);
+    assert.strictEqual(summary.hasError, false);
+    assert.strictEqual(summary.results.length, 0);
+});
+
 (async function () {
     let failed = 0;
     for (const item of tests) {

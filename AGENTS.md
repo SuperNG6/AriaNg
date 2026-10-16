@@ -6,7 +6,7 @@ AriaNg is an AngularJS 1.6 frontend built with Gulp. Application code lives in `
 
 ## Build, Test, and Development Commands
 
-- `npm ci` installs locked dependencies; use it for initial setup or when the lockfile changes. GitHub Actions uses Node 24 and `npm ci`; the legacy CircleCI configuration uses Node 14 and `npm install` (its live status is not established by this repository).
+- `npm ci` installs locked dependencies; use it for initial setup or when the lockfile changes. The fork release and Pages workflows use Node 24 and `npm ci`; upstream development workflows use Node 24 and `npm install`.
 - `npm test` runs all Node assertion-based regression tests.
 - `npx gulp lint` checks JavaScript with ESLint.
 - `npm run build` cleans and creates the standard build in `dist/`.

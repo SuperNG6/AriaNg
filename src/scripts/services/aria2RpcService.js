@@ -87,32 +87,69 @@
         };
 
         var invokeMulti = function (methodFunc, contexts, callback) {
-            var promises = [];
-
-            var hasSuccess = false;
-            var hasError = false;
-            var results = [];
+            var methods = [];
+            var allSilent = true;
 
             for (var i = 0; i < contexts.length; i++) {
-                contexts[i].callback = function (response) {
-                    results.push(response);
+                var requestContext = methodFunc(contexts[i], true);
 
-                    hasSuccess = hasSuccess || response.success;
-                    hasError = hasError || !response.success;
-                };
+                if (!contexts[i].silent) {
+                    allSilent = false;
+                }
 
-                promises.push(methodFunc(contexts[i]));
+                methods.push({
+                    methodName: requestContext.methodName,
+                    params: requestContext.params || []
+                });
             }
 
-            return $q.all(promises).finally(function () {
+            if (methods.length > 0) {
+                return invoke(buildRequestContext('system.multicall', {
+                    silent: allSilent,
+                    callback: function (response) {
+                        if (callback) {
+                            var results = [];
+                            var hasSuccess = false;
+                            var hasError = !response.success;
+
+                            for (var i = 0; i < contexts.length; i++) {
+                                var result = response.success && angular.isArray(response.data) ? response.data[i] : null;
+                                var success = angular.isArray(result) && result.length > 0;
+                                var data = success ? result[0] : (result || response.data);
+
+                                hasSuccess = hasSuccess || success;
+                                hasError = hasError || !success;
+                                results.push({
+                                    id: response.id,
+                                    success: success,
+                                    data: data,
+                                    context: contexts[i]
+                                });
+
+                                if (!success && response.success && !contexts[i].silent) {
+                                    processError(data);
+                                }
+                            }
+
+                            callback({
+                                hasSuccess: hasSuccess,
+                                hasError: hasError,
+                                results: results
+                            });
+                        }
+                    }
+                }, methods));
+            } else {
                 if (callback) {
                     callback({
-                        hasSuccess: !!hasSuccess,
-                        hasError: !!hasError,
-                        results: results
+                        hasSuccess: false,
+                        hasError: false,
+                        results: []
                     });
                 }
-            });
+
+                return $q.all([]);
+            }
         };
 
         var processError = function (error) {
