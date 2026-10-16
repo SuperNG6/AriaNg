@@ -2,12 +2,13 @@
 
 ## Project Structure & Module Organization
 
-AriaNg is an AngularJS 1.6 frontend built with Gulp. Application code lives in `src/`: controllers and services are under `src/scripts/`, page templates under `src/views/`, shared and theme CSS under `src/styles/`, and translations under `src/langs/`. `src/index.html` is the application shell. Node-based regression tests live in `test/`. Build and release automation is defined in `gulpfile.js`, `.circleci/`, and `.github/workflows/`. Treat `dist/` and `.tmp/` as generated output; edit sources instead.
+AriaNg is an AngularJS 1.6 frontend built with Gulp. Application code lives in `src/`: controllers and services are under `src/scripts/`, page templates under `src/views/`, shared and theme CSS under `src/styles/`, and translations under `src/langs/`. `src/index.html` is the application shell. Node-based regression tests live in `test/`. Build and release automation is defined in `gulpfile.js` and `.github/workflows/`. Treat `dist/` and `.tmp/` as generated output; edit sources instead.
 
 ## Build, Test, and Development Commands
 
 - `npm ci` installs locked dependencies; use it for initial setup or when the lockfile changes. The fork release and Pages workflows use Node 24 and `npm ci`; upstream development workflows use Node 24 and `npm install`.
 - `npm test` runs all Node assertion-based regression tests.
+- `npm run test:browser` sequentially builds and checks both distributions with mocked RPC in Chromium; see [upstream merge and QA setup](docs/upstream-merge.md).
 - `npx gulp lint` checks JavaScript with ESLint.
 - `npm run build` cleans and creates the standard build in `dist/`.
 - `npx gulp clean build-bundle` creates the All-In-One `dist/index.html` build.
@@ -34,6 +35,10 @@ Tests use Node's `assert` module and lightweight VM stubs. Add meaningful behavi
 Both `npx gulp clean build` and `npx gulp clean build-bundle` include lint, so a separate final lint run is unnecessary when building. Use `npx gulp lint` for early feedback or when no build is needed. Run the two clean/build variants sequentially because they share output directories. Expand verification for concrete dependency impact, failures, or unresolved risk, not simply because a file changed.
 
 Results remain valid for the tested source/configuration state. Documentation-only evidence updates and commits do not require repeating successful checks; recheck affected outputs if Git metadata changes embedded build information. Missing environments must be reported as unverified, not passed; complete independent work and try suitable local/mock verification before declaring a required check blocked.
+
+## Upstream Merges
+
+Use [docs/upstream-merge.md](docs/upstream-merge.md) for the last merged upstream baseline, namespaced tags, fork compatibility decisions, and reusable acceptance commands. Update its baseline after each upstream merge; inspect semantic compatibility even when Git reports no conflicts.
 
 ## Commit & Pull Request Guidelines
 
