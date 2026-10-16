@@ -3981,6 +3981,37 @@ test('automatic recovery resumes a pause owned by the previous version', functio
     assert.strictEqual(task.files[0].selected, 'false');
 });
 
+test('automatic recovery releases a stale owned pause before a later user pause', function () {
+    ['active', 'waiting'].forEach(function (status) {
+        const task = {gid: 'task', status: status, bittorrent: {}, files: [
+            {index: '1', length: '1', selected: 'false'},
+            {index: '2', length: '200', selected: 'true'}
+        ]};
+        const context = loadFilterService({tasks: {task: task}, savedQueue: [{
+            rpcIdentity: 'http|localhost|6800|jsonrpc', rootGid: 'root', childGid: 'task',
+            thresholdBytes: 100, startAfterFilter: true, sourceType: 'magnet',
+            stage: 'applying-filter', preserveExistingSelection: true, pauseOwned: true,
+            selectedIndexes: [2], allIndexes: [1, 2], originalRemoveUnselectedFile: 'false'
+        }], taskOptions: {'bt-remove-unselected-file': 'true'}});
+        context.service.start();
+        context.tick();
+        const savedAfterObservation = JSON.parse(JSON.stringify(context.getSavedQueue()));
+        task.status = 'paused';
+        context.tickUntilIdle();
+        assert.deepStrictEqual(context.startedGids, []);
+        assert.strictEqual(task.status, 'paused');
+        assert.strictEqual(context.service.getStatus().filtered, 1);
+
+        const reloaded = loadFilterService({tasks: {task: task},
+            savedQueue: savedAfterObservation,
+            taskOptions: {'bt-remove-unselected-file': 'true'}});
+        reloaded.service.start();
+        reloaded.tickMany(5);
+        assert.deepStrictEqual(reloaded.startedGids, []);
+        assert.strictEqual(task.status, 'paused');
+    });
+});
+
 test('automatic OK without selection convergence falls back only after verified restoration', function () {
     const task = {gid: 'task', status: 'active', bittorrent: {}, files: [
         {index: '1', length: '1', selected: 'true'}, {index: '2', length: '200', selected: 'true'}
@@ -4047,6 +4078,33 @@ test('restarts bulk stability window after a backward clock jump', function () {
     assert.strictEqual(context.service.getBulkStatus().type, 'running');
     context.tickMany(4);
     assert.strictEqual(context.service.getBulkStatus().filtered, 1);
+});
+
+test('bulk mutation retries recover from a backward clock jump in applying and restoring', function () {
+    ['applying', 'restoring'].forEach(function (stage) {
+        const restoring = stage === 'restoring';
+        const task = createActiveBtPayload('task', [
+            {index: '1', length: '20', selected: restoring ? 'false' : 'true'},
+            {index: '2', length: '200', selected: 'true'}
+        ]);
+        const storage = createApplyingBulkStorage('task');
+        const current = storage.savedBulkProgresses[0].current;
+        current.stage = stage;
+        current.mutationRequestedAt = 100000;
+        current.restoreRetryCount = restoring ? 1 : 0;
+        const context = loadFilterService(Object.assign({now: 1000, tasks: {task: task},
+            taskOptions: {task: {'bt-remove-unselected-file': restoring ? 'true' : 'false'}}}, storage));
+        context.service.start();
+        context.tick();
+        context.tickMany(3);
+        assert.strictEqual(context.changedOptions.length, 0, 'preserve the one-second retry delay');
+        context.tick();
+        assert.strictEqual(context.changedOptions.length, 1, 'retry without waiting for the old clock');
+        assert.strictEqual(context.changedOptions[0].options['select-file'], restoring ? '1,2' : '2');
+        context.tickMany(5);
+        assert.strictEqual(context.service.getBulkStatus().type, 'complete');
+        assert.strictEqual(context.service.getBulkStatus()[restoring ? 'failed' : 'filtered'], 1);
+    });
 });
 
 // 将真实传输服务接到协调器，验证超时失败能释放单飞锁，而迟到回包不会释放下一轮的锁。
