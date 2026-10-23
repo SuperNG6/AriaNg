@@ -1,151 +1,224 @@
-# 新建 BT 任务小文件过滤 PRD（维护版）
+# BT 小文件过滤 PRD（维护版）
 
-> 状态：当前实现说明。最后按代码、回归测试与 aria2 官方文档核对：2026-07-13。
+> 状态：当前实现说明，按 2.2.5 代码与回归测试核对，2026-10-24。
 >
-> 本文是 BT 小文件过滤的产品与维护入口。当前代码与测试优先于历史计划；改动核心状态机前仍必须阅读 [维护指南](../../.claude/skills/bt-filter-dev/SKILL.md)。
+> 本文是 BT 小文件过滤的唯一产品规范，覆盖“新建任务自动过滤”和“过滤正在下载的任务”两条入口，取代 [改进文档](bt-filter-improvement.md) 中的计划性描述。代码与测试优先于历史资料；修改状态机、RPC 调用或徽标前，先按 [维护指南](../../.claude/skills/bt-filter-dev/SKILL.md) 阅读相关章节。
 
 ## 0. 维护决策原则
 
-以普通用户的主路径为先：在 payload 下载前完成筛选，且不为了极端边界破坏“立即下载”与“稍后下载”的既定语义。
+以普通用户的主路径为先：在 payload 下载前完成筛选，不破坏“立即下载”和“稍后下载”的既定语义，宁可保留全部文件也不留下半配置任务。
 
-- 修复高概率问题、会造成数据/任务错误的问题，以及局部、低风险且不改变产品设计的改动。
-- 对只在请求回包恰好丢失、生命周期恰好交错或同一站点多标签页并发等条件下发生的低频边界，先准确记录并观察真实反馈；不要因此引入手工 GID、全局锁、常驻服务或复杂恢复协议。
-- 只有真实用户报告、部署方式变化，或能用小而无副作用的改动解决时，才重新评估这些边界。
+- 优先修复高概率问题、会改错文件选择或任务状态的问题，以及局部、低风险、不改变产品设计的问题。
+- 对回包恰好丢失、生命周期恰好交错、多标签页并发等低频边界，先如实记录并观察真实反馈；不为此引入手工 GID、全局锁、事务日志或常驻服务。
+- 只有出现真实用户报告、部署方式变化，或能用小而无副作用的改动解决时，才重新评估这些边界。
 
 ## 1. 产品目标
 
-在新建支持的 BitTorrent 任务时，按用户设置的阈值排除较小文件，减少不需要文件的持续下载、磁盘占用和后续清理成本。
+BT 资源常夹带说明、截图、广告等小文件。本功能按用户设定的阈值排除较小文件，减少不需要文件的下载、磁盘占用和后续清理。
 
-实现必须保持 AriaNg 的纯静态前端形态：不修改 aria2、不要求服务端常驻过滤程序。筛选由浏览器在连接 aria2 时协调，aria2 本身负责元数据和下载。
+AriaNg 保持纯静态前端：不修改 aria2，不需要服务端常驻程序。筛选由连接 aria2 的浏览器页面协调，aria2 负责元数据、下载和完成时清理。
 
-成功的混合大小任务会在 payload 下载前将 aria2 的文件选择改为“保留的大文件”；无法安全筛选时宁可恢复完整选择，也不能留下半配置任务。
+## 2. 两条入口
 
-## 2. 支持范围与非目标
-
-| 输入 | 是否进入过滤 | 识别规则 |
+| | 新建任务自动过滤 | 过滤正在下载的任务（批量） |
 | --- | --- | --- |
-| 磁力链接 | 是 | `magnet:?` |
+| 入口 | 新建任务页顶栏开关和阈值 | “正在下载”页开启文件列表后的批量操作栏 |
+| 对象 | 本次新建的磁力、远程 torrent、本地 torrent | 已经 active 的 BT 内容任务 |
+| 时机 | payload 开始下载前 | 用户确认后逐个处理 |
+| 选择基准 | 全部文件 | 当前已选文件，保留用户手动排除 |
+| 失败处理 | 恢复全选及原清理选项，计为回退 | 恢复原选择及原清理选项，计为失败 |
+| 持久化 | `BtFileFilterQueue` | `BtFileFilterBulkQueue` 与 `BtFileFilterBulkProgress` |
+
+两条入口的状态机和持久化各自独立，共用一个调度器（第 7 节）。同一 GID 不会同时被两边修改：批量流程会跳过自动流程拥有的 root 和 child。
+
+两条入口共用一个阈值设置 `btFileFilterMinSizeMb`，默认 `100`，只接受 `1–102400` 的整数，按 `MB × 1024 × 1024` 字节计算。在任一入口修改阈值，都会影响之后的新建任务和下一次批量运行；已经提交的任务和正在运行的批次使用各自的阈值快照。
+
+## 3. 新建任务自动过滤
+
+### 3.1 支持范围
+
+| 输入 | 是否过滤 | 识别规则 |
+| --- | --- | --- |
+| 磁力链接 | 是 | 以 `magnet:?` 开头 |
+| 远程 torrent URL | 是 | HTTP/HTTPS，去掉 query 和 fragment 后路径以 `.torrent` 结尾 |
 | 本地 `.torrent` | 是 | 用户上传的 torrent 文件 |
-| 远程 torrent URL | 是 | HTTP/HTTPS URL 去掉 query/fragment 后，路径以 `.torrent` 结尾 |
-| 普通 HTTP/FTP/SFTP 直链 | 否 | 沿用原有下载流程 |
-| Metalink | 否 | 沿用原有下载流程 |
+| HTTP/FTP/SFTP 直链 | 否 | 沿用原有新建流程 |
+| Metalink | 否 | 沿用原有新建流程 |
 
-同一批 URL 可混合 BT 候选与普通直链。功能不根据响应头猜测 torrent，不支持跨浏览器、跨设备、清除站点数据后的恢复，也不提供服务端后台过滤器。
+同一批 URL 可以混合 BT 候选和普通直链。功能不根据响应头猜测 torrent。
 
-## 3. 用户设置、界面与结果语义
+### 3.2 设置与提交
 
-### 设置与状态展示
+- 开关和阈值只出现在新建任务页顶栏，开关默认关闭，两者都持久化。阈值无效且开关开启时禁止提交。
+- 提交时为每个 BT 候选冻结意图快照：阈值、来源类型，以及“立即下载”或“稍后下载”。之后修改表单，不影响已提交的任务。
+- 同一批提交里部分失败时，只有 aria2 成功返回 GID 的 BT 候选才入队；全部失败时停留在新建页，不当作提交成功。
 
-- 控件只在 `/new` 顶栏出现；默认关闭，默认阈值为 `100 MB`。
-- 阈值只接受 `1–102400` 的整数；代码按 `MB × 1024 × 1024` 字节计算。输入无效时禁止提交。
-- 提交时生成不可变意图快照；之后修改开关或阈值不会影响已入队任务。
-- 顶栏状态可在任何页面显示：恢复、等待元数据、处理中、完成或回退。完成状态约 5 秒后隐藏；回退状态约 10 秒后隐藏，并只发一次批量非阻塞警告。
-- 待处理 job 的 metadata root 与 payload child 都会在任务行显示“过滤中”徽章；完成后徽章消失。
+### 3.3 文件选择规则
 
-### 文件选择规则
-
-| 文件集合 | 行为 |
+| 文件集合 | 结果 |
 | --- | --- |
-| 混合大小 | 严格小于阈值的文件被排除；一次 `changeOption` 同时设置 `select-file` 与 `bt-remove-unselected-file=true` |
-| 全部小于阈值 | 视为资源本身由小文件组成；恢复/确认全选，完整下载，并恢复原有清理选项 |
-| 全部大于或等于阈值 | 不改写用户已有的文件选择或清理选项 |
-| 筛选多次失败 | 恢复全选和原始清理选项，再按原始“立即/稍后”意图处理，并标记为回退 |
+| 大小混合 | 小于阈值的文件被排除；一次 `changeOption` 同时设置 `select-file` 和 `bt-remove-unselected-file=true`，结果为“已过滤” |
+| 全部小于阈值 | 视为资源本身由小文件组成：恢复全选和原清理选项，完整下载，结果为“完整” |
+| 全部大于或等于阈值 | 不修改文件选择和清理选项，结果为“完整” |
+| 筛选 3 次仍未生效 | 恢复全选和原清理选项，结果为“回退” |
 
-边界是严格的：大小**等于**阈值必须保留。aria2 的 `select-file` 索引从 **1** 开始，不能改成 0 开始。
+边界是严格的：大小**等于**阈值的文件保留。aria2 文件索引从 **1** 开始。
 
-## 4. aria2 契约
+### 3.4 立即下载与稍后下载
 
-实现依赖 [aria2 官方手册](https://aria2.github.io/manual/en/html/aria2c.html) 中的以下事实：
-
-- `pause-metadata=true` 会暂停元数据下载产生的后续下载；它让磁力/远程 torrent 的 metadata root 继续工作，而 payload child 等待筛选。
-- `select-file` 接受 1-based 的逗号索引列表；在 active 下载上修改该选项通常会使 aria2 重启该任务。
-- `bt-remove-unselected-file=true` 在 BitTorrent **完成时**删除未选择文件，而不是设置时立即删除；恢复全选必须发生在完成前。
-- `forcePause` 可迅速暂停 active/waiting 任务；`unpause` 只会把 `paused` 改为 `waiting`，不是通用的“开始”命令。
-- 磁力与远程 torrent 存在双 GID：metadata root 的 `followedBy` 指向 payload child，child 的 `following` 指回 root。
-- 部署侧若配置了“暂停即移动/删除任务文件”的 aria2 hook，则与“稍后下载”恢复时的 `forcePause` 不兼容；启用本功能时，暂停必须仍可恢复。
-
-未选择文件仍可能因共享 piece 被创建或写入少量数据；正常完成后才由 aria2 清理。这是 aria2 限制，不应承诺“筛选期间磁盘绝不出现小文件”。
-
-## 5. 提交与下载模式
-
-| 场景 | 当前行为 |
+| 场景 | 行为 |
 | --- | --- |
-| 磁力/远程 `.torrent`，启用过滤 | metadata root 立即运行并带 `pause-metadata=true`；随后生成的 payload child 暂停等待筛选 |
-| 本地 `.torrent`，启用过滤 | 先以 paused 状态加入，再读取文件列表 |
-| 普通直链、Metalink 或关闭过滤 | 完全沿用原有新建任务流程 |
-| 原始操作为“立即下载” | child 仍 paused 时，筛选完成后才 `unpause`；恢复时若 child 已 active/waiting，直接筛选且不额外 `unpause` |
-| 原始操作为“稍后下载” | 始终保持暂停；恢复时发现 child 已 active/waiting，必须先 `forcePause`，确认 paused 后才修改选择 |
+| 磁力或远程 torrent | metadata root 立即运行，带 `pause-metadata=true`；aria2 生成的 payload child 处于暂停状态，等待筛选 |
+| 本地 torrent | 以 paused 状态加入，读取文件列表后再筛选 |
+| 原意图为“立即下载” | 筛选完成且任务仍为 paused 时才调用 `unpause`；若恢复时任务已是 active/waiting，直接筛选，不再额外启动 |
+| 原意图为“稍后下载” | 筛选完成后保持暂停；若恢复时发现 child 已是 active/waiting，先 `forcePause`，再筛选 |
 
-因此，当前正常设计不是“关闭浏览器后 payload 自动继续下载”：页面关闭后 metadata 可继续完成，但由它产生的 payload child 会暂停；重新在**同一浏览器、同一 RPC endpoint**打开 AriaNg 后，协调器才继续筛选。立即下载恢复到已 active child 时允许直接改选项，可能已有少量非目标数据，这是已接受的恢复折中。
+页面关闭后，metadata 可以继续下载完成，但生成的 payload child 保持暂停。在**同一浏览器、同一 RPC 地址**重新打开 AriaNg 后，筛选才会继续。
 
-## 6. 状态机与恢复
+“立即下载”恢复到已经 active 的 child 时会直接改选择，可能已有少量非目标数据，这是已接受的折中。部署侧若配置了“暂停即移动或删除文件”的 aria2 hook，会与“稍后下载”的 `forcePause` 冲突，启用本功能时暂停必须仍可恢复。
 
-每个 job 处于以下阶段之一：
+### 3.5 重复 InfoHash 复用已有任务
+
+aria2 中已经存在同一 InfoHash 的下载时，新磁力的 metadata root 会以错误码 `12` 结束。协调器记录该 InfoHash，在等待和活动列表中查找**唯一**匹配的已有任务并接管：
+
+- 以该任务当前的已选文件为基准，只缩小选择，保留用户已有的手动排除；
+- 已有任务原本并非全选时，保留其原清理选项，不改为 `true`；
+- 不套用本次的“立即/稍后”意图：不启动、不暂停已有任务；
+- 匹配到多个候选、或该任务已被其他 job 接管时不接管：前者继续等待，后者直接移除本 job。
+
+### 3.6 阶段与完成判定
 
 ```text
-waiting-metadata
-  -> waiting-files
+waiting-metadata -> waiting-files
   -> applying-filter -> starting-filtered -> completed-filtered
-  -> restoring-full -> starting-full     -> completed-full
-                      starting-fallback  -> completed-fallback
+  -> restoring-full  -> starting-full     -> completed-full
+                        starting-fallback -> completed-fallback
 ```
 
-- `all-large` 直接进入完整下载结果；`all-small` 进入 `restoring-full`；混合任务进入 `applying-filter`。
-- `completed-*` 是终态：不再轮询或写 aria2，但会暂时保留为本批汇总结果，直到最后一个当前批次 job 结算后再清理。
-- 每 250ms 只轮询当前 RPC endpoint 的一个非终态 job；`tickInProgress` 防止正常情况下并发处理多个 job。
-- 只有 `changeOption` 失败消耗筛选重试。状态读取或临时网络失败保留 job，不消耗重试；第三次失败后的下一轮先基于当前文件选择和选项对账，再决定恢复完整选择。
-- 已删除任务静默移除，不启动、不改选择、不计为回退。
+- `changeOption` 返回 OK 只代表请求被接受。之后用 `tellStatus` 和 `getOption` 回读，文件选择与 `bt-remove-unselected-file` 都与目标一致，并连续稳定约 1 秒，才进入下一阶段。
+- 每次写入尝试消耗一次重试次数。写入被接受后，至少等待 1 秒才判断是否需要重写；写入被拒绝时，下一轮立即重试。状态或选项读取失败只保留 job，不消耗重试。
+- 页面刷新后，稳定窗口重新计时，不沿用已保存的观察时间。
+- `completed-*` 是终态，不再轮询或写入。终态记录保留到当前批次全部结束，用于汇总；之后清除。
+- 任务已被删除时静默移除 job：不启动、不改选择、不计为回退。
 
-### metadata root 与 child 恢复
+### 3.7 元数据子任务恢复
 
-1. 正常情况下从 root 的 `followedBy` 取得唯一 child。
-2. root 已完成、出错或不再可查询时，先扫描 `tellWaiting`（包含 paused），再扫描 `tellActive`，用 child 的 `following` 反向关联 root。
-3. 多个候选 child 时绝不任选一个，继续等待；只接受唯一 child。
-4. 连续三次成功扫描仍找不到唯一 child，才按当前恢复分支静默结算；RPC 失败不计入次数。
+1. 正常情况下，从 root 的 `followedBy` 取得唯一的 child。
+2. root 已完成、出错或无法查询时，先扫描 `tellWaiting`（包含 paused），再扫描 `tellActive`，用 child 的 `following` 反向关联 root。
+3. 有多个候选 child 时不任选，继续等待；只接受唯一候选。
+4. 连续 3 次扫描成功但仍找不到唯一 child，才移除 job；RPC 失败不计入次数。
 
-恢复扫描默认使用 aria2 的 1000 项列表窗口；超过该规模的同时等待任务没有额外分页保证。
+恢复扫描使用 aria2 默认的 1000 项列表窗口，超过这个规模时不保证能找到。
 
-## 7. 持久化、RPC 隔离与生命周期
+## 4. 过滤正在下载的任务（批量）
 
-- 队列键为 `BtFileFilterQueue`。job 保存 RPC identity、root/child GID、阈值快照、原始下载模式、来源类型、阶段、重试/恢复字段和时间戳。
-- RPC identity 为 `protocol|host|port|interface`，刻意不包含 alias、secret 与自定义请求头。切换 endpoint 时，其他 endpoint 的 job 保留但不处理。
-- `MainController` 在成功取得全局统计后启动协调器；Unauthorized 或控制器销毁时停止。重新可用时必须重新启动。
-- 队列只在同一浏览器站点数据内恢复；没有跨标签页合并或锁，也没有跨设备同步。
+### 4.1 入口与候选
 
-## 8. 已知实现风险（不是既定产品承诺）
+- 只在“正在下载”页、且开启任务列表文件列表时显示批量操作栏。它需要完整文件数据才能预览候选。
+- 候选必须同时满足：状态为 active；不是做种中，也不在校验中；有合法 InfoHash 和 `bittorrent.info`（排除磁力元数据任务）；不归自动过滤所有；当前已选文件中至少有一个小于阈值、至少有一个大于或等于阈值。
+- 暂停和等待中的任务不在候选内。
+- 操作栏显示“可处理 N 个任务，共 M 个小文件”。预览只在完整数据或阈值变化时计算；分析中、没有候选、阈值无效或已有批次运行时，按钮禁用。
+- 点击“开始过滤”后弹出确认框，集中说明范围、手动排除的保留规则和完成时删除风险。确认后冻结 GID 列表和阈值。
+- 每个 RPC 地址同时只允许一个批次。两份存储任一写入失败，都提示“无法启动”，不当作已提交。
 
-以下事项是当前代码的维护遗留，不是待办清单。按本 PRD 的维护决策原则，它们当前均不安排修复；只有出现真实用户反馈或低风险、小范围方案时才重新评估：
+### 4.2 选择规则
 
-1. aria2 已接收 add 请求、但浏览器在收到 GID 回包前关闭或断线时，job 尚未持久化；payload child 可能保持 paused 且无法自动恢复。
-2. 已 `complete`、`error` 或 seeding 的 child 目前没有统一的“禁止筛选写操作”守卫。
-3. 第三次 `changeOption` 回包不确定时的对账是缓解，不是原子事务；极端乱序仍可能与恢复全选竞争。
-4. 多标签页同时写队列没有合并或锁；当前实现仅保证单页面生命周期内的迟到回调不会继续旧操作。
+- 目标选择 = 当前已选文件中大于或等于阈值的文件；用户手动排除的文件保持排除。
+- 任务原本全选时，清理选项设为 `true`；原本已有手动排除时，保留原清理选项，避免完成时删除用户自己排除的文件。
+- 执行前保存原选择和原清理选项快照，重试和恢复都使用快照。
 
-其中，“添加请求已被 aria2 接收但浏览器未收到 GID 回包”可通过预分配手工 GID 降低风险，但会把 GID 全局唯一性、冲突处理与兼容性责任引入主流程；以当前发生概率和普通用户收益衡量，不采用该方案。
+### 4.3 执行与结果
 
-## 9. 维护入口与门禁
+每个任务依次经过：检查选项 → 再读一次最新状态（防止用户期间暂停或改选）→ 写入 → 回读稳定。
+
+| 结果 | 条件 |
+| --- | --- |
+| 已过滤 | 回读目标选择和清理选项连续稳定约 1 秒 |
+| 未处理（skipped） | 任务已不存在、已归自动过滤所有、不再是 active BT 内容任务，或已无可排除的小文件 |
+| 失败 | 写入 3 次仍未生效，恢复到原选择（最多再尝试 3 次）；或处理期间任务已停止 |
+
+- 进度、游标和当前任务一起持久化。刷新后从当前任务继续，每个任务只结算一次，稳定窗口重新计时。
+- 系统时钟回拨时，重新开始等待和稳定计时，不被保存的未来时间戳阻塞。
+- 完成后显示“已完成：X 个任务已过滤，Y 个未处理，Z 个失败”约 5 秒。之后要等到新的完整列表数据返回，才能发起下一批，避免用旧预览重复提交。即使用户关闭了周期刷新，也会主动获取一次新数据，失败时每 5 秒重试。
+
+### 4.4 暂停语义
+
+- 新批次不主动暂停任务，由 aria2 自行处理 active 任务修改 `select-file` 后的重启。
+- 用户在过滤期间暂停的任务保持暂停：目标选择稳定时仍计为已过滤，恢复原选择后仍计为失败，过滤器都不启动它。
+- 旧版本留下的批量检查点若记录了过滤器自己发起的暂停（`pauseOwned`），恢复时由过滤器恢复运行；观察到任务已经运行后，就放弃这份暂停归属。
+
+## 5. 共享界面
+
+### 顶栏状态
+
+顶栏只出现一组过滤状态。
+
+| 场景 | 显示 |
+| --- | --- |
+| 只有自动过滤 | 恢复中、等待文件列表、处理中、完成或回退 |
+| 只有批量过滤 | 文件列表开启的“正在下载”页由操作栏显示；其他页面在顶栏显示进度或完成结果 |
+| 两者同时 | 批量状态优先；自动任务仍可通过任务行徽标识别 |
+| 都空闲 | 不显示 |
+
+- 自动过滤完成提示约 5 秒后隐藏。回退提示约 10 秒后隐藏，并只发一次页内警告。
+- 窄屏使用紧凑文案，例如“处理中 3”“已回退 1”。
+
+### 任务行徽标
+
+正在被协调器处理的任务，在任务名右侧显示“过滤中”，悬停显示具体阶段。
+
+- 自动过滤 job 的 metadata root 和 payload child 都显示徽标，两行同属一个下载。
+- 批量过滤只有当前任务显示徽标，阶段为“正在检查任务”“正在应用过滤”“正在恢复完整任务”或“正在启动……任务”。
+- 结算后徽标消失。协调器停止后不显示任何徽标，重新启动后按持久化队列恢复。
+
+徽标只表示协调器正在处理该任务，不替代 aria2 的 active、waiting、paused 状态。
+
+### 文案
+
+英文源文案在 `defaultLanguage.js`，各语言在 `src/langs/*.txt`。开发阶段只维护英文和简体中文；发版前翻译全部语言，并保留全部命名占位符。规则见 [AGENTS.md](../../AGENTS.md) 的国际化约定。
+
+## 6. aria2 契约
+
+依据 [aria2 官方手册](https://aria2.github.io/manual/en/html/aria2c.html)：
+
+- `pause-metadata=true` 会暂停由元数据下载产生的后续下载，metadata root 本身照常运行。
+- `select-file` 接受从 1 开始的逗号分隔索引。修改 active 任务的该选项时，由 aria2 处理任务重启。
+- `bt-remove-unselected-file=true` 在 BT 下载**完成时**才删除未选文件，不是设置时立即删除。想撤销过滤，必须在完成前恢复全选。
+- `changeOption` 只能修改未停止的任务（active、waiting、paused）；对已完成或出错的任务会被拒绝。`getOption` 和 `tellStatus` 对已停止任务仍可读取。
+- `forcePause` 可以暂停 active/waiting 任务；`unpause` 只把 paused 改为 waiting，不是通用的“开始”命令。
+- 磁力和远程 torrent 有两个 GID：root 的 `followedBy` 指向 child，child 的 `following` 指回 root。
+
+未选文件仍可能因共享 piece 被创建或写入少量数据，由 aria2 在完成时清理。不能承诺“筛选期间磁盘上绝不出现小文件”。
+
+## 7. 调度、持久化与生命周期
+
+- 协调器每 250ms 调度一次，同一时刻最多一条 RPC 操作链在途。自动 job 轮流处理；自动和批量都有任务时，交替执行一条自动链和一条批量链。空队列不触发全局刷新。
+- WebSocket 请求有 20 秒期限，超时按失败返回，不重放可能已执行的写入；协调器下一轮回读服务器状态后再决定下一步。
+- 队列、批次定义和批次进度按 RPC 身份 `protocol|host|port|interface` 隔离，不含别名、密钥和请求头。切换 RPC 后，其他地址的任务保留但不处理。
+- 连接身份取自页面加载时的配置快照。设置页中尚未生效的修改，不会提前改变正在处理的队列。
+- `MainController` 在首次成功取得全局统计后启动协调器，认证失败或控制器销毁时停止，下次成功取得统计后重新启动。停止后旧回调不能推进状态，也不能释放新一轮的执行锁。
+- 持久化数据在读取时按白名单清洗，未知字段和非法阶段被丢弃。只在同一浏览器的站点数据内恢复，没有跨标签页锁，也没有跨设备同步。
+
+## 8. 已知限制
+
+以下是当前接受的限制，不是待办。按第 0 节原则，有真实反馈或出现低风险方案时再评估。
+
+1. aria2 已接受新建请求、但浏览器在收到 GID 前关闭或断线时，job 尚未保存，payload child 可能保持暂停且无法自动恢复。预分配手工 GID 能缓解，但会把 GID 唯一性和冲突处理引入主流程，不采用。
+2. 自动过滤首次入队不检查存储写入是否成功。
+3. 自动过滤没有为已停止或做种中的 payload 单独设置“禁止写入”守卫。对已停止任务的写入会被 aria2 拒绝，3 次后转入恢复：选择本来就是全选时按回退结束；否则会一直尝试恢复，直到任务被删除。正常提交的 child 处于暂停状态，不会进入这条路径。
+4. 多标签页同时写入队列时，没有合并或加锁。
+
+## 9. 维护入口与验收
 
 | 位置 | 职责 |
 | --- | --- |
-| [`ariaNgBtFileFilterService`](../../src/scripts/services/ariaNgBtFileFilterService.js) | 选择规划、持久化队列、状态机、恢复、状态汇总 |
-| [`NewTaskController`](../../src/scripts/controllers/new.js) | 识别候选、快照意图、metadata/local-torrent 的暂停策略、拿到 GID 后入队 |
-| [`MainController`](../../src/scripts/controllers/main.js) | 设置绑定、顶栏状态、协调器启动/停止 |
-| [`DownloadListController`](../../src/scripts/controllers/list.js) 与 [`list.html`](../../src/views/list.html) | 待处理阶段映射与任务行徽章 |
-| [`aria2TaskService`](../../src/scripts/services/aria2TaskService.js) | 原子任务选项、暂停与启动 RPC 封装 |
-| [`ariaNgSettingService`](../../src/scripts/services/ariaNgSettingService.js) | 过滤设置与当前 RPC identity |
-| [`test/new-task-small-file-filter.test.js`](../../test/new-task-small-file-filter.test.js) | 主状态机、恢复、回退与新建任务回归 |
-| [`test/bt-filter-pending-badge.test.js`](../../test/bt-filter-pending-badge.test.js) | 徽章阶段映射和服务生命周期回归 |
+| [`ariaNgBtFileFilterService`](../../src/scripts/services/ariaNgBtFileFilterService.js) | 选择规划、两套状态机、持久化、恢复、调度、状态汇总和徽标映射 |
+| [`NewTaskController`](../../src/scripts/controllers/new.js) | 识别候选、冻结意图、设置 metadata 与本地 torrent 的暂停方式、拿到 GID 后入队 |
+| [`MainController`](../../src/scripts/controllers/main.js) | 设置绑定、顶栏状态优先级、协调器启停 |
+| [`DownloadListController`](../../src/scripts/controllers/list.js) 与 [`list.html`](../../src/views/list.html) | 批量操作栏、预览、完成后刷新、任务行徽标 |
+| [`aria2TaskService`](../../src/scripts/services/aria2TaskService.js) | 修改选项、暂停、启动及任务列表 RPC 封装 |
+| [`test/new-task-small-file-filter.test.js`](../../test/new-task-small-file-filter.test.js) | 自动过滤、恢复、选择规则和批量对账回归 |
+| [`test/new-task-rpc-integration.test.js`](../../test/new-task-rpc-integration.test.js) | 新建任务到过滤队列的跨模块回归 |
+| [`test/bt-filter-pending-badge.test.js`](../../test/bt-filter-pending-badge.test.js) | 徽标映射和服务停止后的可见性 |
 
-修改筛选服务、控制器、徽章或相关 i18n 后，至少执行：
-
-1. `npm test`
-2. `npx gulp lint`
-3. `npx gulp clean build`
-4. `npx gulp clean build-bundle`
-5. 若影响界面，375px 浅色与深色人工检查
-
-功能开发阶段只同步 `src/scripts/config/defaultLanguage.js` 与 `src/langs/zh_Hans.txt`，`npm test` 检查两者的 BT 过滤键和全部命名占位符一致，不固定键数量。文案冻结、准备发版时再同步全部 `src/langs/*.txt`，并执行 `npm run test:i18n-release`；缺键或占位符漂移会阻止发版。
-
-## 10. 维护资料
-
-- [维护指南](../../.claude/skills/bt-filter-dev/SKILL.md)
+改动后的检查按 [AGENTS.md](../../AGENTS.md) 的风险矩阵执行：BT 状态机、RPC、恢复和持久化改动需要失败路径回归、`npm test` 和两种构建；可见界面改动还要检查受影响状态，涉及布局或主题时检查 375px 浅色和深色。本地模拟不能代替真实 aria2，未在真实 aria2 中验证的部分应如实说明。
