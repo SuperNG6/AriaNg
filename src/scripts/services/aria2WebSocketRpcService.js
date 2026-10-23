@@ -98,6 +98,8 @@
             }
 
             var context = state.context;
+            // 按字段是否存在判断成功，不能按真值：changePosition 移到队首时 result 为 0。
+            var hasResult = typeof content.result !== 'undefined' && !content.error;
             responseGeneration++;
 
             state.deferred.resolve({
@@ -105,13 +107,13 @@
                 context: context
             });
 
-            if (content.result && context.connectionSuccessCallback) {
+            if (hasResult && context.connectionSuccessCallback) {
                 context.connectionSuccessCallback({
                     rpcUrl: rpcUrl
                 });
             }
 
-            if (content.result && context.successCallback) {
+            if (hasResult && context.successCallback) {
                 ariaNgLogService.debug('[aria2WebSocketRpcService.processMethodCallback] ' + (context && context.requestBody && context.requestBody.method ? context.requestBody.method + ' ' : '') + 'response success', content);
 
                 context.successCallback(context.id, content.result);

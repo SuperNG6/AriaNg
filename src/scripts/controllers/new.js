@@ -33,13 +33,24 @@
             };
         };
 
+        // 链接页的下载路径输入框清空后会留下空字符串；提交副本中去掉它，与选项页一致地回退到 aria2 全局目录。
+        var getSubmissionOptions = function () {
+            var options = angular.copy($scope.context.options);
+
+            if (angular.isDefined(options.dir) && !String(options.dir || '').trim()) {
+                delete options.dir;
+            }
+
+            return options;
+        };
+
         // 每个 URL 使用独立选项副本；元数据必须先运行，pause-metadata 只让后续 BT 内容停下来等待过滤。
         var getDownloadTasksByLinks = function (options, pauseOnAdded, filterIntent) {
             var urls = ariaNgCommonService.parseUrlsFromOriginInput($scope.context.urls);
             var tasks = [];
 
             if (!options) {
-                options = angular.copy($scope.context.options);
+                options = getSubmissionOptions();
             }
 
             for (var i = 0; i < urls.length; i++) {
@@ -70,7 +81,7 @@
         };
 
         var downloadByLinks = function (pauseOnAdded, filterIntent, responseCallback) {
-            var options = angular.copy($scope.context.options);
+            var options = getSubmissionOptions();
             var tasks = getDownloadTasksByLinks(options, pauseOnAdded, filterIntent);
 
             saveDownloadPath(options);
@@ -79,7 +90,7 @@
         };
 
         var downloadByTorrent = function (pauseOnAdded, responseCallback) {
-            var options = angular.copy($scope.context.options);
+            var options = getSubmissionOptions();
 
             var task = {
                 content: $scope.context.uploadFile.base64Content,
@@ -94,7 +105,7 @@
         var downloadByMetalink = function (pauseOnAdded, responseCallback) {
             var task = {
                 content: $scope.context.uploadFile.base64Content,
-                options: angular.copy($scope.context.options)
+                options: getSubmissionOptions()
             };
 
             saveDownloadPath(task.options);

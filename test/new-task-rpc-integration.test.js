@@ -46,7 +46,8 @@ function createSubmission(options = {}) {
             isCurrentRpcUseWebSocket: () => false, getCurrentRpcSecret: () => 'test-secret',
             getCurrentRpcDisplayName: () => 'test', getAfterCreatingNewTask: () => 'task-list'
         },
-        aria2SettingService: {getNewTaskOptionKeys: () => [], getSpecifiedOptions: () => ({}), getSettingHistory: () => []},
+        aria2SettingService: {getNewTaskOptionKeys: () => [], getSpecifiedOptions: () => ({}), getSettingHistory: () => [],
+            addSettingHistory: noop},
         ariaNgStorageService: {get: (key) => storage[key], set: (key, value) => { storage[key] = plain(value); return true; }},
         ariaNgKeyboardService: {}, ariaNgFileService: {}, ariaNgNotificationService: {},
         ariaNgLocalizationService: {}, aria2WebSocketRpcService: {}, aria2HttpRpcService: transport
@@ -127,6 +128,38 @@ test('all-fault and transport failures create no jobs and leave the form open', 
         assert.deepStrictEqual(submission.persistedJobs(), []);
         assert.deepStrictEqual(submission.paths, []);
     }
+});
+
+// 清空链接页的下载路径表示使用 aria2 全局目录；空 dir 会被 aria2 接受并下载到其工作目录。
+test('a blank download path is omitted from every submission and the exported command', () => {
+    for (const blank of ['', '   ']) {
+        const links = createSubmission({enabled: false, urls: 'https://example.invalid/file.iso'});
+        links.scope.context.options.dir = blank;
+        links.scope.startDownload(false);
+        const linkCall = links.requests[0].requestBody.params[0][0];
+        assert.strictEqual(linkCall.methodName, 'aria2.addUri');
+        assert.strictEqual('dir' in linkCall.params[2], false);
+
+        const torrent = createSubmission();
+        torrent.scope.context.options.dir = blank;
+        torrent.scope.context.taskType = 'torrent';
+        torrent.scope.context.uploadFile = {base64Content: 'dA=='};
+        torrent.scope.startDownload(false);
+        assert.strictEqual(torrent.requests[0].requestBody.method, 'aria2.addTorrent');
+        assert.strictEqual(JSON.stringify(torrent.requests[0].requestBody.params).indexOf('"dir"'), -1);
+
+        const exported = createSubmission({enabled: false, urls: 'https://example.invalid/file.iso'});
+        exported.scope.context.options.dir = blank;
+        exported.scope.showExportCommandAPIModal();
+        assert.strictEqual('dir' in exported.scope.context.exportCommandApiOptions.data[0].options, false);
+        // 只清理提交副本，输入框仍保留用户当前内容。
+        assert.strictEqual(exported.scope.context.options.dir, blank);
+    }
+
+    const kept = createSubmission({enabled: false, urls: 'https://example.invalid/file.iso'});
+    kept.scope.context.options.dir = '/data/downloads';
+    kept.scope.startDownload(false);
+    assert.strictEqual(kept.requests[0].requestBody.params[0][0].params[2].dir, '/data/downloads');
 });
 
 let failed = 0;

@@ -215,6 +215,29 @@ test('sends connecting requests once on open and retains their response callback
     assert.strictEqual(errors.length, 0);
 });
 
+// aria2.changePosition 移到队首时返回 0；列表拖拽要等成功回调才恢复刷新。
+test('delivers a falsy JSON-RPC result such as 0 to the success callback', function () {
+    const context = loadWebSocketRpcService(500);
+    const errors = [];
+    const results = [];
+    const request = makeRequest('position', errors);
+    request.successCallback = function (id, result) { results.push(result); };
+    context.service.request(request);
+    context.clients[0].messageCallback({data: JSON.stringify({id: 'position', jsonrpc: '2.0', result: 0})});
+    assert.deepStrictEqual(results, [0]);
+    assert.strictEqual(errors.length, 0);
+    assert.strictEqual(context.deferreds[0].resolveCount, 1);
+
+    const failedRequest = makeRequest('failed-position', errors);
+    failedRequest.successCallback = function (id, result) { results.push(result); };
+    context.service.request(failedRequest);
+    context.clients[0].messageCallback({data: JSON.stringify({id: 'failed-position', jsonrpc: '2.0',
+        error: {code: 1, message: 'GID failed-position is not found'}})});
+    assert.deepStrictEqual(results, [0]);
+    assert.strictEqual(errors.length, 1);
+    assert.strictEqual(errors[0].error.message, 'GID failed-position is not found');
+});
+
 test('settles a synchronous socket send failure instead of leaking a pending request', function () {
     const context = loadWebSocketRpcService(500);
     const errors = [];
