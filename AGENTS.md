@@ -37,7 +37,7 @@ Follow `.editorconfig`: use spaces, LF line endings, a final newline, and no tra
 
 Tests use Node's `assert` module and lightweight VM stubs. Add meaningful behavior regression tests to `test/<feature>.test.js` and register new suites in `npm test`; reproduce a bug before fixing it where feasible. Do not add implementation-mirroring tests for documentation, formatting, or other low-impact edits.
 
-Each suite loads source files into a VM context with hand-written stubs that cover only what the code calls today. When code starts calling another dependency method, update the stubs in every suite that loads that file; a `... is not a function` failure after a source change usually means a stale stub, not a product bug. The existing harnesses (`loadFilterService`, `createSubmission`, `loadWebSocketRpcService`) are the quickest way to reproduce a bug before fixing it.
+Each suite loads source files into a VM context with hand-written stubs that cover only what the code calls today. When code starts calling another dependency method, update the stubs in every suite that loads that file; a `... is not a function` failure after a source change usually means a stale stub, not a product bug. The existing harnesses (`loadFilterService`, `createSubmission`, `loadWebSocketRpcService`) are the quickest way to reproduce a bug before fixing it. They do not model Angular scopes: `ng-if` and `ng-repeat` create child scopes, so a primitive `ng-model` stops following the directive scope once the user types. Confirm template or binding bugs in a real browser (`npm run test:browser`, extending it if needed), and run the check against the old code to prove it catches the bug.
 
 | Change | Completion checks |
 | --- | --- |
@@ -57,7 +57,7 @@ Results remain valid for the tested source/configuration state. Documentation-on
 These patterns caused real bugs outside the BT filter; the Skill keeps the BT-specific ledger.
 
 - **JSON-RPC success is the presence of `result`, not its truthiness.** `aria2.changePosition` returns `0` when a task moves to the top; a truthiness check silently drops the callback and froze list refreshing after drag-and-drop. Keep presence checks in every transport.
-- **Blank required options are omitted, never sent as `''`.** Options marked `required` in `aria2Options.js` are deleted when cleared on the options tab. aria2 accepts an empty `dir` and downloads into its own working directory. New-task submissions go through `getSubmissionOptions()` in `controllers/new.js`; extend it if another required option gets a direct input.
+- **Blank required options are omitted, never sent as `''`.** Options marked `required` in `aria2Options.js` are deleted when cleared on the options tab. aria2 accepts an empty `dir` and downloads into its own working directory. `buildRequestOptions()` in `aria2RpcService` drops them for every add request, including the `#!/new` URL command; `getSubmissionOptions()` in `controllers/new.js` additionally trims `dir` for history and the exported command.
 - **A successful `system.multicall` does not mean every item succeeded.** Keep per-item `success`, `data`, `context.task`, and input order; see the conventions in [docs/upstream-merge.md](docs/upstream-merge.md).
 - **Per-server state is keyed by `ariaNgSettingService.getCurrentRpcIdentity()`.** The identity is `protocol|host|port|interface` (no secret) taken from a page-load snapshot, so unsaved setting edits cannot redirect in-flight work.
 

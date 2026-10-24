@@ -1,6 +1,6 @@
 # 新建任务下载路径与路径历史 PRD（维护版）
 
-> 状态：当前实现说明，按 2.2.5 代码与回归测试核对，2026-10-24。
+> 状态：当前实现说明，按 2.2.6 代码与回归测试核对，2026-10-24。
 >
 > 上游合并时的冲突处理约定见 [上游合并与验收](../upstream-merge.md)。
 
@@ -13,14 +13,15 @@
 ### 链接页的下载路径
 
 - 链接页工具栏显示“下载路径”输入框。它与“选项”页的 `dir` 设置是同一个值，任一处修改都会同步到另一处。
-- 打开新建任务页时预填一个路径：优先取当前 RPC 历史的第一条（最近使用）；当前 RPC 没有历史时，取旧版全局历史的第一条；都没有时留空。
+- 打开新建任务页时预填一个路径：优先取当前 RPC 历史的第一条（最近使用）；当前 RPC 还没有历史时，取升级前留下的旧版全局历史的第一条；都没有时留空。
 - 输入框为空时只显示占位文字，不把 aria2 全局默认目录当作输入值。
 
 ### 提交
 
 - 链接、种子和 Metalink 三种提交方式使用同一份下载路径。“导出命令行 API”也使用同一份。
-- 路径非空时，原样作为该任务的 `dir` 提交，并记入路径历史。
+- 路径去掉首尾空白后作为该任务的 `dir` 提交，并记入当前 RPC 的路径历史。粘贴路径常带空格或换行，aria2 会按原样建目录。
 - 路径为空或只含空白时，不提交 `dir`，由 aria2 使用全局下载目录，也不记入历史。这与“选项”页清空必填项的行为一致；aria2 会接受空的 `dir`，把文件下载到 aria2 进程的工作目录，因此不能把空值发给 aria2。
+- RPC 层对所有新建请求统一去掉空的必填项，URL 命令 `#!/new?url=…&dir=` 等其他入口也不会提交空 `dir`。
 - 只清理提交时的副本，输入框保留用户当前输入。
 
 ### 历史下拉
@@ -33,9 +34,10 @@
 | 存储键 | 内容 |
 | --- | --- |
 | `History.dir.<RPC 身份>` | 当前连接的路径历史 |
-| `History.dir` | 旧版全局历史；继续写入，供其他设置入口和旧数据使用 |
+| `History.dir` | 升级前的旧版全局历史；只读，不再写入 |
 
-- 每次提交非空路径时，同时写入上述两份历史：最新的排在最前，去重，最多保留 10 条。
+- 每次提交非空路径时，只写入当前 RPC 的历史：最新的排在最前，去重，最多保留 10 条。
+- 旧版全局历史不再写入。若继续写入，没有自己历史的新 RPC 会回退到它，预填另一台服务器刚用过的路径，任务可能下到错误的磁盘。
 - RPC 身份为 `protocol|host|port|interface`，不含别名、密钥和请求头，与 BT 过滤队列相同。
 - 历史作用域在打开新建任务页时绑定。提交的 RPC 回包到达前，即使用户修改了连接配置，路径也只会写入原连接的历史。
 - 历史独立于设置存储，不包含在“导出设置”中。导入上游 1.3.15 导出的、带 `settingHistory` 字段的设置时，会忽略该字段。本分支沿用自己的历史存储，没有迁移上游那份格式。
@@ -46,12 +48,14 @@
 | --- | --- |
 | [`NewTaskController`](../../src/scripts/controllers/new.js) | 预填路径、生成提交选项（清理空路径）、写入历史 |
 | [`src/views/new.html`](../../src/views/new.html) | 链接页输入框，与选项页共享 `context.options.dir` |
-| [`aria2SettingService`](../../src/scripts/services/aria2SettingService.js) | 按作用域读写和清除历史 |
+| [`aria2SettingService`](../../src/scripts/services/aria2SettingService.js) | 按作用域读写和清除历史；`getScopedSettingHistory` 统一“当前 RPC 优先、旧版全局只读回退”的规则 |
+| [`aria2RpcService`](../../src/scripts/services/aria2RpcService.js) | `buildRequestOptions` 去掉空的必填项 |
 | [`directives/setting.js`](../../src/scripts/directives/setting.js) | 选项页历史下拉的作用域与回退 |
-| [`test/new-task-rpc-integration.test.js`](../../test/new-task-rpc-integration.test.js) | 空路径不提交、非空路径保留等回归 |
+| [`test/new-task-rpc-integration.test.js`](../../test/new-task-rpc-integration.test.js) | 空路径不提交、路径去空白、非空路径保留等回归 |
+| [`test/audit-regressions.test.js`](../../test/audit-regressions.test.js) | RPC 层去掉空必填项、历史不跨服务器推荐 |
 
 修改时至少保持：
 
-1. 当前 RPC 的历史优先于其他连接和旧版全局历史。
+1. 当前 RPC 的历史优先于其他连接和旧版全局历史；提交只写当前 RPC 的历史。
 2. 空路径不出现在任何提交请求或导出命令中。
 3. 异步提交期间修改连接配置，不会把路径写到另一台服务器的历史里。
