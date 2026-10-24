@@ -649,6 +649,10 @@ const loadNewTaskController = function (options) {
 
                 return [];
             },
+            getScopedSettingHistory: function (key, scope) {
+                const history = this.getSettingHistory(key, scope);
+                return history.length ? history : this.getSettingHistory(key);
+            },
             addSettingHistory: function (key, value, scope) {
                 savedDownloadPaths.push({key: key, value: value, scope: scope});
             }
@@ -806,11 +810,8 @@ test('restores and updates the last download path for the current RPC', function
     context.scope.startDownload(false);
 
     assert.strictEqual(context.uriTasks[0].options.dir, '/downloads/movies');
+    // 只写当前连接的历史；旧版全局历史只读，继续写入会把本机路径推荐给其他服务器。
     assert.deepStrictEqual(context.savedDownloadPaths, [{
-        key: 'dir',
-        value: '/downloads/movies',
-        scope: undefined
-    }, {
         key: 'dir',
         value: '/downloads/movies',
         scope: rpcIdentity

@@ -218,13 +218,13 @@ test('retries each batch item once and finishes only after all input items settl
     assert.strictEqual(summary.failedCount, 1);
 });
 
-function loadBatchRpc() {
+function loadBatchRpc(allOptions) {
     const requests = [];
     const transport = {on: noop, request: (context) => { requests.push(context); return Promise.resolve(); }};
     const service = loadFactory('src/scripts/services/aria2RpcService.js', {
         '$location': {path: () => '/new'}, '$q': {all: Promise.all.bind(Promise)},
         aria2RpcConstants: {rpcSystemServiceName: 'system', rpcServiceName: 'aria2', rpcServiceVersion: '2.0', rpcTokenPrefix: 'token:'},
-        aria2RpcErrors: {}, aria2AllOptions: {}, ariaNgLogService: log,
+        aria2RpcErrors: {}, aria2AllOptions: allOptions || {}, ariaNgLogService: log,
         ariaNgCommonService: {generateUniqueId: () => 'batch', showError: noop},
         ariaNgSettingService: {isCurrentRpcUseWebSocket: () => false, getCurrentRpcSecret: () => 'test-secret', getCurrentRpcDisplayName: () => 'test'},
         aria2HttpRpcService: transport
@@ -282,6 +282,75 @@ test('empty multicall settles without sending an RPC request', async function ()
     assert.strictEqual(summary.hasSuccess, false);
     assert.strictEqual(summary.hasError, false);
     assert.strictEqual(summary.results.length, 0);
+});
+
+// 所有新建入口（含 /new 命令）都经过 RPC 层；清空的必填项不能作为 '' 发给 aria2，否则 dir 会落到 aria2 工作目录。
+test('blank required options are dropped for every add request while optional blanks are kept', function () {
+    const {service, requests} = loadBatchRpc({dir: {required: true}, 'max-download-limit': {required: true}, out: {}});
+    service.addUri({task: {urls: ['https://example.invalid/file'],
+        options: {dir: '  ', 'max-download-limit': '', out: '', split: '4'}}});
+    assert.deepStrictEqual(requests[0].requestBody.params[2], {out: '', split: '4'});
+    service.addUri({task: {urls: ['https://example.invalid/file'], options: {dir: '/data'}}});
+    assert.deepStrictEqual(requests[1].requestBody.params[2], {dir: '/data'});
+});
+
+function loadHistoryService() {
+    const storage = {};
+    return {storage, service: loadFactory('src/scripts/services/aria2SettingService.js', {
+        ariaNgConstants: {settingHistoryKeyPrefix: 'History', historyMaxStoreCount: 10},
+        aria2AllOptions: {dir: {}}, aria2GlobalAvailableOptions: {}, aria2QuickSettingsAvailableOptions: {},
+        aria2TaskAvailableOptions: {}, aria2RpcService: {}, ariaNgLogService: log,
+        ariaNgStorageService: {get: (key) => storage[key], set: (key, value) => { storage[key] = value; return true; },
+            keys: () => Object.keys(storage), remove: (key) => { delete storage[key]; }}
+    })};
+}
+
+test('scoped path history never recommends another server path and only reads legacy history', function () {
+    const {storage, service} = loadHistoryService();
+    storage['History.dir'] = ['/legacy'];
+    service.addSettingHistory('dir', '/mnt/a', 'rpc-a');
+    // VM 上下文中的数组原型不同，比较前转为本地数组。
+    assert.deepStrictEqual(Array.from(service.getScopedSettingHistory('dir', 'rpc-a')), ['/mnt/a']);
+    assert.deepStrictEqual(Array.from(service.getScopedSettingHistory('dir', 'rpc-b')), ['/legacy']);
+    assert.deepStrictEqual(Array.from(storage['History.dir']), ['/legacy']);
+});
+
+function loadHttpRpc(respond) {
+    const setting = loadSettingService({language: 'en', protocol: 'http', rpcHost: 'a.invalid',
+        rpcPort: '6800', rpcInterface: 'jsonrpc', httpMethod: 'POST'}).service;
+    return loadFactory('src/scripts/services/aria2HttpRpcService.js', {
+        '$http': respond, ariaNgConstants: {}, ariaNgCommonService: {}, ariaNgLogService: log,
+        ariaNgSettingService: setting
+    });
+}
+
+const httpContext = function (events, successCallback) {
+    return {requestBody: {id: 'id', method: 'aria2.tellStatus'},
+        successCallback: successCallback || function () { events.push('success'); },
+        errorCallback: function (id, error) { events.push('error:' + error.message); },
+        connectionSuccessCallback: function () { events.push('connected'); },
+        connectionFailedCallback: function () { events.push('disconnected'); }};
+};
+
+// 业务回调的异常是程序错误，不能被当作连接失败，也不能让同一请求再以失败回调一次。
+test('an exception thrown by an HTTP success callback is not reported as a connection failure', async function () {
+    const events = [];
+    const service = loadHttpRpc(() => Promise.resolve({data: {id: 'id', jsonrpc: '2.0', result: 'OK'}}));
+    const result = service.request(httpContext(events, function () {
+        events.push('success');
+        throw new Error('callback bug');
+    }));
+    await result.then(noop, noop);
+    assert.deepStrictEqual(events, ['connected', 'success']);
+});
+
+// 代理返回空响应体时调用方仍需收到结果，否则依赖回调恢复刷新的流程会永久停住。
+test('an HTTP response without a JSON-RPC result or error still settles the request', async function () {
+    const events = [];
+    const service = loadHttpRpc(() => Promise.resolve({data: ''}));
+    await service.request(httpContext(events)).then(noop, noop);
+    assert.strictEqual(events.length, 1);
+    assert.ok(/^error:/.test(events[0]), events.join(','));
 });
 
 (async function () {

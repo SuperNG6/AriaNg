@@ -171,6 +171,7 @@ const loadListController = function (route, options) {
     const errors = [];
     const timeoutHandles = [];
     const thresholdSaves = [];
+    const positionCallbacks = [];
     const listeners = {};
     const watchers = [];
     const fullTask = {
@@ -266,6 +267,9 @@ const loadListController = function (route, options) {
         setBtFileFilterMinSizeMb: function (value) { thresholdSaves.push(value); }
     };
     const taskService = {
+        changeTaskPosition: function (gid, position, callback) {
+            positionCallbacks.push(callback);
+        },
         getTaskList: function (location, full, callback) {
             const tasks = nextTasks || [JSON.parse(JSON.stringify(full ? fullTask : basicTask))];
             nextTasks = null;
@@ -387,6 +391,7 @@ const loadListController = function (route, options) {
         },
         deferNextRequest: function () { deferNextRequest = true; },
         resolveRequest: function (index) { requests[index].respond(); },
+        resolvePositionChange: function () { positionCallbacks.shift()({success: true, data: 0}); },
         setNextTasks: function (tasks) { nextTasks = tasks; },
         setNextTaskListResponse: function (response) { nextTaskListResponse = response; },
         trigger: function (name) { listeners[name]({}); }
@@ -610,11 +615,13 @@ test('does not submit bulk filtering with an invalid threshold', function () {
     assert.deepStrictEqual(context.bulkEnqueues, []);
 });
 
-test('shares the BT threshold with MainController and debounces preview rescans', function () {
+// 两个入口共用已保存的阈值；未通过校验的批量输入不能进入新建任务页的共享表单对象。
+test('syncs only valid bulk thresholds to MainController and debounces preview rescans', function () {
     const shared = {enabled: true, minSizeMb: 100};
     const context = loadListController('downloading', {sharedFilterContext: shared});
 
-    assert.strictEqual(context.scope.bulkBtFilterContext, shared);
+    assert.notStrictEqual(context.scope.bulkBtFilterContext, shared);
+    assert.strictEqual(context.scope.bulkBtFilterContext.minSizeMb, 100);
     context.scope.bulkBtFilterContext.minSizeMb = 200;
     context.scope.changeBulkBtFileFilterThreshold();
     context.scope.bulkBtFilterContext.minSizeMb = 250;
@@ -629,6 +636,23 @@ test('shares the BT threshold with MainController and debounces preview rescans'
     context.flushTimeouts();
     assert.strictEqual(context.bulkPreviewCalls.length, 2);
     assert.strictEqual(context.bulkPreviewCalls[1].thresholdBytes, 250 * 1024 * 1024);
+
+    context.scope.bulkBtFilterContext.minSizeMb = null;
+    context.scope.changeBulkBtFileFilterThreshold();
+    assert.strictEqual(shared.minSizeMb, 250);
+    assert.deepStrictEqual(context.thresholdSaves, [200, 250]);
+});
+
+// 离开页面后 $destroy 已阻止旧回包写入共享列表；迟到的拖拽回调不能解除这道保护。
+test('a late drag-and-drop reply after leaving the page does not let stale lists through', function () {
+    const context = loadListController('waiting', {deferInitialRequest: true});
+
+    context.trigger('task-list.drop-model');
+    context.trigger('$destroy');
+    context.resolvePositionChange();
+    context.resolveRequest(0);
+
+    assert.deepStrictEqual(context.rootScope.taskContext.list, []);
 });
 
 test('reports a rejected bulk enqueue after a delayed confirmation', function () {

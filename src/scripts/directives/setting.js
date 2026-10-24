@@ -33,11 +33,7 @@
                         return;
                     }
 
-                    scope.history = aria2SettingService.getSettingHistory(scope.option.key, ariaNgSettingService.getCurrentRpcIdentity());
-
-                    if (!scope.history.length) {
-                        scope.history = aria2SettingService.getSettingHistory(scope.option.key);
-                    }
+                    scope.history = aria2SettingService.getScopedSettingHistory(scope.option.key, ariaNgSettingService.getCurrentRpcIdentity());
                 };
 
                 var destroyTooltip = function () {

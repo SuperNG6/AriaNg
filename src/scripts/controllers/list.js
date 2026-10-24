@@ -22,10 +22,18 @@
         var bulkCompletionRefreshTimeoutPromise = null;
         var pendingBulkPreviewCompletionId = null;
         var megabyte = 1024 * 1024;
+        // 拖拽回调会解除刷新暂停；离开路由后必须保持暂停，防止旧回包写入下一页的共享列表。
+        var controllerDestroyed = false;
+        // 模板每个任务行都会读取这两项设置；按页面缓存，避免每轮 digest 反复解析整个设置存储。
+        // 开关只由 task-list-file-list-mode.changed 改变，文件排序在本页修改时同步缓存。
+        var showFileListEnabled = ariaNgSettingService.getShowFileListInTaskListPage();
+        var fileListDisplayOrder = ariaNgSettingService.getFileListDisplayOrder();
+        var fileListDisplayOrderType = ariaNgCommonService.parseOrderType(fileListDisplayOrder);
 
         var collapsedFileDirs = {};
 
-        $scope.bulkBtFilterContext = $scope.btFileFilterContext || {
+        // 两个入口共用已保存的阈值，但输入框使用独立对象；只有合法值才同步到新建任务页的共享表单。
+        $scope.bulkBtFilterContext = {
             minSizeMb: ariaNgSettingService.getBtFileFilterMinSizeMb()
         };
         $scope.bulkBtFilterPreview = {gids: [], taskCount: 0, fileCount: 0, analyzing: true};
@@ -70,6 +78,9 @@
                 return;
             }
             ariaNgSettingService.setBtFileFilterMinSizeMb($scope.bulkBtFilterContext.minSizeMb);
+            if ($scope.btFileFilterContext) {
+                $scope.btFileFilterContext.minSizeMb = Number($scope.bulkBtFilterContext.minSizeMb);
+            }
             $scope.bulkBtFilterPreview.analyzing = true;
             if (pendingBulkPreviewCompletionId !== null) {
                 scheduleBulkCompletionRefresh();
@@ -361,7 +372,7 @@
         };
 
         $scope.showTaskListFileList = function () {
-            return ariaNgSettingService.getShowFileListInTaskListPage();
+            return showFileListEnabled;
         };
 
         $scope.changeTaskListFileListDisplayOrder = function (task, type, autoSetReverse) {
@@ -369,7 +380,7 @@
                 return;
             }
 
-            var oldType = ariaNgCommonService.parseOrderType(ariaNgSettingService.getFileListDisplayOrder());
+            var oldType = fileListDisplayOrderType;
             var newType = ariaNgCommonService.parseOrderType(type);
 
             if (autoSetReverse && newType.type === oldType.type) {
@@ -377,17 +388,16 @@
             }
 
             ariaNgSettingService.setFileListDisplayOrder(newType.getValue());
+            fileListDisplayOrder = ariaNgSettingService.getFileListDisplayOrder();
+            fileListDisplayOrderType = ariaNgCommonService.parseOrderType(fileListDisplayOrder);
         };
 
         $scope.isSetTaskListFileListDisplayOrder = function (type) {
-            var orderType = ariaNgCommonService.parseOrderType(ariaNgSettingService.getFileListDisplayOrder());
-            var targetType = ariaNgCommonService.parseOrderType(type);
-
-            return orderType.equals(targetType);
+            return fileListDisplayOrderType.equals(ariaNgCommonService.parseOrderType(type));
         };
 
         $scope.getTaskListFileListOrderType = function (task) {
-            return task && task.multiDir ? null : ariaNgSettingService.getFileListDisplayOrder();
+            return task && task.multiDir ? null : fileListDisplayOrder;
         };
 
         $scope.isTaskListFileDirCollapsed = function (task, nodePath) {
@@ -444,11 +454,14 @@
             pauseDownloadTaskRefresh = true;
 
             aria2TaskService.changeTaskPosition(gid, index, function () {
-                pauseDownloadTaskRefresh = false;
+                if (!controllerDestroyed) {
+                    pauseDownloadTaskRefresh = false;
+                }
             }, true);
         });
 
         $scope.$on('task-list-file-list-mode.changed', function (event, enabled) {
+            showFileListEnabled = !!enabled;
             downloadTaskModeGeneration++;
             needRequestWholeInfo = !!enabled;
             pendingWholeInfoRequestId = null;
@@ -485,6 +498,7 @@
 
         // 路由离开时同时阻止迟到回包写入共享列表，并取消本控制器拥有的定时器和监听。
         $scope.$on('$destroy', function () {
+            controllerDestroyed = true;
             pauseDownloadTaskRefresh = true;
 
             if (downloadTaskRefreshPromise) {

@@ -7,22 +7,17 @@
         // 页面创建时绑定当前连接身份，异步提交期间编辑连接配置不能把路径历史写到另一服务器。
         var downloadPathHistoryScope = ariaNgSettingService.getCurrentRpcIdentity();
 
-        // 同时维护旧的全局历史与按连接隔离的历史，兼容其他设置入口和旧版本数据。
+        // 只写当前连接的历史；全局历史仅作升级前数据的只读回退，继续写入会把本机路径推荐给其他服务器。
         var saveDownloadPath = function (options) {
             if (!options || !options.dir) {
                 return;
             }
 
-            aria2SettingService.addSettingHistory('dir', options.dir);
             aria2SettingService.addSettingHistory('dir', options.dir, downloadPathHistoryScope);
         };
 
         var getRememberedDownloadPathOptions = function () {
-            var history = aria2SettingService.getSettingHistory('dir', downloadPathHistoryScope);
-
-            if (!history || !history.length) {
-                history = aria2SettingService.getSettingHistory('dir');
-            }
+            var history = aria2SettingService.getScopedSettingHistory('dir', downloadPathHistoryScope);
 
             if (!history || !history.length || typeof history[0] !== 'string' || !history[0]) {
                 return {};
@@ -33,12 +28,19 @@
             };
         };
 
-        // 链接页的下载路径输入框清空后会留下空字符串；提交副本中去掉它，与选项页一致地回退到 aria2 全局目录。
+        // 链接页的下载路径可直接输入或粘贴：提交副本去掉首尾空白，清空时删除 dir，与选项页一致地回退到 aria2 全局目录。
+        // RPC 层也会丢弃空的必填项；这里另需处理导出命令和路径历史。
         var getSubmissionOptions = function () {
             var options = angular.copy($scope.context.options);
 
-            if (angular.isDefined(options.dir) && !String(options.dir || '').trim()) {
-                delete options.dir;
+            if (angular.isDefined(options.dir)) {
+                var dir = String(options.dir || '').trim();
+
+                if (dir) {
+                    options.dir = dir;
+                } else {
+                    delete options.dir;
+                }
             }
 
             return options;
@@ -261,8 +263,14 @@
 
                 var firstTask = null;
 
+                // 批量结果保留失败项；失败项的 data 是错误对象，不能当作 GID 打开详情页。
                 if (response.results && response.results.length > 0) {
-                    firstTask = response.results[0];
+                    for (var j = 0; j < response.results.length; j++) {
+                        if (response.results[j].success) {
+                            firstTask = response.results[j];
+                            break;
+                        }
+                    }
                 } else if (response) {
                     firstTask = response;
                 }

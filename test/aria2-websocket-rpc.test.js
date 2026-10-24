@@ -238,6 +238,19 @@ test('delivers a falsy JSON-RPC result such as 0 to the success callback', funct
     assert.strictEqual(errors[0].error.message, 'GID failed-position is not found');
 });
 
+// 既无 result 也无 error 的应答已移除了等待项和期限，必须以失败结算，不能让调用方永远等不到回调。
+test('settles a reply that carries neither result nor error as a failure', function () {
+    const context = loadWebSocketRpcService(500);
+    const errors = [];
+    let successes = 0;
+    const request = makeRequest('empty', errors);
+    request.successCallback = function () { successes++; };
+    context.service.request(request);
+    context.clients[0].messageCallback({data: JSON.stringify({id: 'empty', jsonrpc: '2.0'})});
+    assert.strictEqual(successes, 0);
+    assert.strictEqual(errors.length, 1);
+});
+
 test('settles a synchronous socket send failure instead of leaking a pending request', function () {
     const context = loadWebSocketRpcService(500);
     const errors = [];

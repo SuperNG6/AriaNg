@@ -15,6 +15,7 @@ function createSubmission(options = {}) {
     const requests = [];
     const storage = {};
     const paths = [];
+    const histories = [];
     const module = {
         constant(name, value) { values[name] = value; return module; },
         factory(name, value) { definitions[name] = value; return module; },
@@ -22,7 +23,7 @@ function createSubmission(options = {}) {
     };
     const context = vm.createContext({angular: {
         module: () => module, copy: plain, extend: Object.assign,
-        isDefined: (value) => value !== undefined, isArray: Array.isArray,
+        isDefined: (value) => value !== undefined, isUndefined: (value) => value === undefined, isArray: Array.isArray,
         isString: (value) => typeof value === 'string'
     }});
     for (const file of ['config/constants.js', 'config/aria2RpcConstants.js',
@@ -44,10 +45,12 @@ function createSubmission(options = {}) {
         ariaNgSettingService: {
             getCurrentRpcIdentity: () => 'http|test.invalid|6800|jsonrpc',
             isCurrentRpcUseWebSocket: () => false, getCurrentRpcSecret: () => 'test-secret',
-            getCurrentRpcDisplayName: () => 'test', getAfterCreatingNewTask: () => 'task-list'
+            getCurrentRpcDisplayName: () => 'test',
+            getAfterCreatingNewTask: () => options.afterCreating || 'task-list'
         },
-        aria2SettingService: {getNewTaskOptionKeys: () => [], getSpecifiedOptions: () => ({}), getSettingHistory: () => [],
-            addSettingHistory: noop},
+        aria2SettingService: {getNewTaskOptionKeys: () => [], getSpecifiedOptions: () => ({}),
+            getScopedSettingHistory: () => [],
+            addSettingHistory: (key, value, scope) => { histories.push({key, value, scope}); }},
         ariaNgStorageService: {get: (key) => storage[key], set: (key, value) => { storage[key] = plain(value); return true; }},
         ariaNgKeyboardService: {}, ariaNgFileService: {}, ariaNgNotificationService: {},
         ariaNgLocalizationService: {}, aria2WebSocketRpcService: {}, aria2HttpRpcService: transport
@@ -66,7 +69,7 @@ function createSubmission(options = {}) {
         'magnet:?xt=urn:btih:' + 'b'.repeat(40),
         'https://example.invalid/data.torrent'
     ].join('\n');
-    return {scope, requests, paths, storage,
+    return {scope, requests, paths, storage, histories,
         filter: get('ariaNgBtFileFilterService'),
         replaceIntent: (value) => { intent = value; },
         persistedJobs: () => storage[values.ariaNgConstants.btFileFilterQueueStorageKey]
@@ -160,6 +163,26 @@ test('a blank download path is omitted from every submission and the exported co
     kept.scope.context.options.dir = '/data/downloads';
     kept.scope.startDownload(false);
     assert.strictEqual(kept.requests[0].requestBody.params[0][0].params[2].dir, '/data/downloads');
+});
+
+// 粘贴路径常带首尾空白；aria2 会按原样建目录，历史也会记住错误路径。
+test('a pasted download path is trimmed before submission and history', () => {
+    const submission = createSubmission({enabled: false, urls: 'https://example.invalid/file.iso'});
+    submission.scope.context.options.dir = '  /data/downloads \n';
+    submission.scope.startDownload(false);
+    assert.strictEqual(submission.requests[0].requestBody.params[0][0].params[2].dir, '/data/downloads');
+    assert.deepStrictEqual(submission.histories, [
+        {key: 'dir', value: '/data/downloads', scope: 'http|test.invalid|6800|jsonrpc'}
+    ]);
+});
+
+// 批量结果包含失败项；“创建后打开详情”必须跳到第一个成功创建的任务。
+test('task-detail redirect uses the first successful task of a partially failed batch', () => {
+    const submission = createSubmission({enabled: false, afterCreating: 'task-detail',
+        urls: 'https://example.invalid/bad.iso\nhttps://example.invalid/good.iso'});
+    submission.scope.startDownload(false);
+    submission.requests[0].successCallback('batch', [{code: 1, message: 'failed'}, ['good-gid']]);
+    assert.deepStrictEqual(submission.paths, ['/task/detail/good-gid']);
 });
 
 let failed = 0;

@@ -135,6 +135,14 @@ async function injector(page, fn, arg) {
         const history=await page.locator('[data-option-key="dir"]').evaluate(element=>angular.element(element).isolateScope().history);
         assert.deepStrictEqual(history,['/rpc-a']);
         report.cases.push(theme+': path dropdown uses current RPC history');
+        // 新建任务页 0ms 延迟保存会在两次按键之间回填模型；字节值不能在输入中途被改写为 1K。
+        const limitInput=page.locator('[data-option-key="max-download-limit"] input').first();
+        await limitInput.pressSequentially('10240',{delay:60});
+        await page.waitForTimeout(100);
+        assert.strictEqual(await limitInput.inputValue(),'10240');
+        const savedLimit=await page.evaluate(()=>angular.element(document.querySelector('form[name="newTaskForm"]')).scope().context.options['max-download-limit']);
+        assert.strictEqual(savedLimit,'10240');
+        report.cases.push(theme+': typed byte option keeps its value with 0ms lazy save');
         assert.strictEqual(report.rpcMethods['aria2.getGlobalOption'],before+1);
         await page.screenshot({path:path.join(output,mode+'-'+theme+'-375-options.png'),fullPage:true});
         await swipe(page,false);

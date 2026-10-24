@@ -193,6 +193,12 @@
 
                 return options;
             },
+            // 优先读取当前连接的历史；该连接还没有历史时，只读回退到升级前的全局历史，不再向全局历史写入。
+            getScopedSettingHistory: function (key, scope) {
+                var history = this.getSettingHistory(key, scope);
+
+                return history.length ? history : this.getSettingHistory(key);
+            },
             getSettingHistory: function (key, scope) {
                 if (!this.isOptionKeyValid(key)) {
                     return [];

@@ -259,11 +259,25 @@
             return context;
         };
 
+        // 清空的必填项表示沿用 aria2 全局值，不能作为 '' 提交：aria2 会接受空 dir 并下载到其工作目录。
+        // 非必填项的空值可能是有意清空，保持原样。
+        var isBlankRequiredOption = function (options, optionName) {
+            var value = options[optionName];
+
+            return !!(aria2AllOptions[optionName] && aria2AllOptions[optionName].required &&
+                (value === null || angular.isUndefined(value) || String(value).trim() === ''));
+        };
+
         var buildRequestOptions = function (originalOptions, context) {
             var options = angular.copy(originalOptions);
 
             for (var optionName in options) {
                 if (!options.hasOwnProperty(optionName)) {
+                    continue;
+                }
+
+                if (isBlankRequiredOption(options, optionName)) {
+                    delete options[optionName];
                     continue;
                 }
 

@@ -119,6 +119,11 @@
                 context.successCallback(context.id, content.result);
             }
 
+            // 等待项和期限已移除；既无 result 也无 error 的应答按失败结算，避免调用方永远等不到回调。
+            if (!hasResult && !content.error && context.errorCallback) {
+                context.errorCallback(context.id, {message: 'Cannot connect to aria2!'});
+            }
+
             if (content.error && context.errorCallback) {
                 ariaNgLogService.debug('[aria2WebSocketRpcService.processMethodCallback] ' + (context && context.requestBody && context.requestBody.method ? context.requestBody.method + ' ' : '') + 'response error', content);
 

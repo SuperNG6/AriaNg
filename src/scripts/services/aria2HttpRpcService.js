@@ -89,12 +89,24 @@
 
                 ariaNgLogService.debug('[aria2HttpRpcService.request] ' + (context && context.requestBody && context.requestBody.method ? context.requestBody.method + ' ' : '') + 'request start', requestContext);
 
+                // onError 作为 then 的第二个参数，只处理传输失败；业务回调抛出的异常不能被当作连接失败并再次回调。
                 return $http(requestContext).then(function onSuccess(response) {
                     var data = response.data;
 
                     ariaNgLogService.debug('[aria2HttpRpcService.request] ' + (context && context.requestBody && context.requestBody.method ? context.requestBody.method + ' ' : '') + 'response success', response);
 
-                    if (!data) {
+                    // 空响应体或缺少 result/error 的应答也必须结算，调用方可能依赖回调恢复刷新。
+                    if (!data || (angular.isUndefined(data.result) && !data.error)) {
+                        if (context.errorCallback) {
+                            context.errorCallback(data && data.id, {message: 'Cannot connect to aria2!'});
+                        }
+                        return;
+                    }
+
+                    if (data.error) {
+                        if (context.errorCallback) {
+                            context.errorCallback(data.id, data.error);
+                        }
                         return;
                     }
 
@@ -108,7 +120,7 @@
                     if (context.successCallback) {
                         context.successCallback(data.id, data.result);
                     }
-                }).catch(function onError(response) {
+                }, function onError(response) {
                     var data = response.data;
 
                     ariaNgLogService.debug('[aria2HttpRpcService.request] ' + (context && context.requestBody && context.requestBody.method ? context.requestBody.method + ' ' : '') + 'response error', response);
