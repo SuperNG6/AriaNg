@@ -82,5 +82,23 @@ node test/browser/upstream-merge.cjs bundle
 - 当前 RPC 路径历史优先于其他连接和旧全局历史。
 - 自动任务根／子 GID 与批量过滤徽章，以及停止后徽章清除。
 - 中、法、英语言切换，单文件版离线切换且不请求语言文件。
+- 新建任务选项页逐键输入字节值，0ms 延迟保存不会改写输入。
 
 截图与 JSON 报告写入 `test-results/upstream-merge/`，已由 Git 忽略，两种构建的报告互不覆盖。脚本断言或页面运行错误会令命令失败；截图仍需人工检查。脚本不连接个人 RPC，不操作真实下载。
+
+## 真实 aria2 验收
+
+模拟 RPC 无法证明 aria2 实际怎样解释请求。改动新建任务选项、路径、RPC 传输或任务排序时，用 `test/aria2/run.sh` 连接真实 aria2c 验收。它只需要 Docker：
+
+```sh
+test/aria2/run.sh          # 当前工作区
+test/aria2/run.sh 2.2.4    # 已提交版本，用作修复前对照
+```
+
+脚本启动三个一次性 aria2c 容器（默认镜像 `superng6/aria2:latest`，可用 `ARIA2_IMAGE` 覆盖）：A、B 是被测下载端，各自有密钥、全局下载目录和单独的工作目录；S 只负责做种。验收容器构建 AriaNg、提供测试文件和一个最小 HTTP tracker，并用 Chromium 像用户一样提交、切换 RPC 和拖动任务。每个场景都回读 aria2 的任务目录、队列顺序、文件选择和磁盘上的实际文件，不连外网，也不连接个人 RPC。退出时删除容器、网络和下载数据；报告写入 `test-results/aria2/<版本>.json` 和 `<版本>-bt.json`，任一场景失败时命令返回非零。
+
+BT 场景现场生成多文件种子，由 S 做种，所有 aria2 关闭 DHT 和本地发现，只通过验收 tracker 互相发现。覆盖本地种子、磁力和远程种子的“立即／稍后下载”、全部小文件、正在下载任务的批量过滤、关页后恢复、重复 InfoHash 复用、做种期间、做种结束和做种中删除时的磁盘状态，以及任务列表文件树。每个场景都按文件校验 SHA-1，确认大文件完整、被排除的小文件最终不存在。aria2 的 `max-concurrent-downloads` 默认是 5，做种中的任务也会计数，所以验收中的 aria2 都调到 20，避免后面的场景排队超时。限速做种用来让任务在批量过滤和 InfoHash 复用期间保持下载中。
+
+首次运行会构建本地镜像 `ariang-aria2-qa-runner:local`（Node 24 与 Chromium 系统依赖），并复用 `ariang-npm-cache`、`ariang-playwright` 两个 Docker 卷。不要在自定义 Docker 网络的容器里再执行 `playwright install --with-deps`，那里的 apt 可能因 DNS 只返回 IPv6 地址而挂起。
+
+修复 bug 时同时对修复前的版本运行一次，确认对应场景在旧版本失败、新版本通过。Node 测试桩不模拟 Angular 子作用域和 `ngTrim`，只在测试桩中复现、却在真实浏览器或 aria2 中无法复现的问题，不应作为修复依据。

@@ -1,6 +1,6 @@
 # 新建任务下载路径与路径历史 PRD（维护版）
 
-> 状态：当前实现说明，按 2.2.6 代码与回归测试核对，2026-10-24。
+> 状态：当前实现说明，按 2.2.7 代码与回归测试核对，2026-10-24。
 >
 > 上游合并时的冲突处理约定见 [上游合并与验收](../upstream-merge.md)。
 
@@ -19,9 +19,9 @@
 ### 提交
 
 - 链接、种子和 Metalink 三种提交方式使用同一份下载路径。“导出命令行 API”也使用同一份。
-- 路径去掉首尾空白后作为该任务的 `dir` 提交，并记入当前 RPC 的路径历史。粘贴路径常带空格或换行，aria2 会按原样建目录。
+- 路径非空时，作为该任务的 `dir` 提交，并记入当前 RPC 的路径历史。输入框是 Angular 文本输入框，首尾空白在输入时已自动去掉。
 - 路径为空或只含空白时，不提交 `dir`，由 aria2 使用全局下载目录，也不记入历史。这与“选项”页清空必填项的行为一致；aria2 会接受空的 `dir`，把文件下载到 aria2 进程的工作目录，因此不能把空值发给 aria2。
-- RPC 层对所有新建请求统一去掉空的必填项，URL 命令 `#!/new?url=…&dir=` 等其他入口也不会提交空 `dir`。
+- RPC 层对所有新建请求统一去掉空的必填项，URL 命令 `#!/new/<base64url>?dir=` 等其他入口也不会提交空 `dir`。
 - 只清理提交时的副本，输入框保留用户当前输入。
 
 ### 历史下拉
@@ -51,7 +51,7 @@
 | [`aria2SettingService`](../../src/scripts/services/aria2SettingService.js) | 按作用域读写和清除历史；`getScopedSettingHistory` 统一“当前 RPC 优先、旧版全局只读回退”的规则 |
 | [`aria2RpcService`](../../src/scripts/services/aria2RpcService.js) | `buildRequestOptions` 去掉空的必填项 |
 | [`directives/setting.js`](../../src/scripts/directives/setting.js) | 选项页历史下拉的作用域与回退 |
-| [`test/new-task-rpc-integration.test.js`](../../test/new-task-rpc-integration.test.js) | 空路径不提交、路径去空白、非空路径保留等回归 |
+| [`test/new-task-rpc-integration.test.js`](../../test/new-task-rpc-integration.test.js) | 空路径不提交、非空路径保留、部分失败后的详情跳转等回归 |
 | [`test/audit-regressions.test.js`](../../test/audit-regressions.test.js) | RPC 层去掉空必填项、历史不跨服务器推荐 |
 
 修改时至少保持：

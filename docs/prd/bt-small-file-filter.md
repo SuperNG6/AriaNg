@@ -1,6 +1,6 @@
 # BT 小文件过滤 PRD（维护版）
 
-> 状态：当前实现说明，按 2.2.6 代码与回归测试核对，2026-10-24。
+> 状态：当前实现说明，按 2.2.7 代码与回归测试核对，2026-10-24。
 >
 > 本文是 BT 小文件过滤的唯一产品规范，覆盖“新建任务自动过滤”和“过滤正在下载的任务”两条入口，取代 [改进文档](bt-filter-improvement.md) 中的计划性描述。代码与测试优先于历史资料；修改状态机、RPC 调用或徽标前，先按 [维护指南](../../.claude/skills/bt-filter-dev/SKILL.md) 阅读相关章节。
 
@@ -16,7 +16,7 @@
 
 BT 资源常夹带说明、截图、广告等小文件。本功能按用户设定的阈值排除较小文件，减少不需要文件的下载、磁盘占用和后续清理。
 
-AriaNg 保持纯静态前端：不修改 aria2，不需要服务端常驻程序。筛选由连接 aria2 的浏览器页面协调，aria2 负责元数据、下载和完成时清理。
+AriaNg 保持纯静态前端：不修改 aria2，不需要服务端常驻程序。筛选由连接 aria2 的浏览器页面协调，aria2 负责元数据、下载和任务结束时的清理。
 
 ## 2. 两条入口
 
@@ -183,12 +183,12 @@ waiting-metadata -> waiting-files
 
 - `pause-metadata=true` 会暂停由元数据下载产生的后续下载，metadata root 本身照常运行。
 - `select-file` 接受从 1 开始的逗号分隔索引。修改 active 任务的该选项时，由 aria2 处理任务重启。
-- `bt-remove-unselected-file=true` 在 BT 下载**完成时**才删除未选文件，不是设置时立即删除。想撤销过滤，必须在完成前恢复全选。
+- `bt-remove-unselected-file=true` 不在设置时删除。已完成的 BT 任务**停止时**才删除未选文件：通常是做种结束；做种中被删除的任务也会被 aria2 结算为 `complete` 并删除。删除按路径进行，下载目录中同名的已有文件也会被删。想撤销过滤，应在下载完成前恢复全选。
 - `changeOption` 只能修改未停止的任务（active、waiting、paused）；对已完成或出错的任务会被拒绝。`getOption` 和 `tellStatus` 对已停止任务仍可读取。
 - `forcePause` 可以暂停 active/waiting 任务；`unpause` 只把 paused 改为 waiting，不是通用的“开始”命令。
 - 磁力和远程 torrent 有两个 GID：root 的 `followedBy` 指向 child，child 的 `following` 指回 root。
 
-未选文件仍可能因共享 piece 被创建或写入少量数据，由 aria2 在完成时清理。不能承诺“筛选期间磁盘上绝不出现小文件”。
+未选文件可能因与已选文件共享 piece 而被写入，小于一个 piece 的文件甚至会完整出现。它们在做种期间仍留在磁盘上，任务停止时才被清理。不能承诺“下载或做种期间磁盘上绝不出现小文件”。真实 aria2 验收（`test/aria2/run.sh`）覆盖了做种中、做种结束和做种中删除三种磁盘状态。
 
 ## 7. 调度、持久化与生命周期
 

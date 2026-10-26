@@ -2,7 +2,7 @@
 
 ## Project Context & Structure
 
-This repository is the SuperNG6 fork of [mayswind/AriaNg](https://github.com/mayswind/AriaNg). Fork-owned features are the BT small-file filter (new tasks and bulk filtering of downloading tasks), the inline task-list file list, and the new-task download path with per-RPC path history; everything else is inherited upstream code. Fixing inherited code is in scope when it causes a real bug, but keep such fixes minimal and local so later upstream merges stay easy.
+This repository is the SuperNG6 fork of [mayswind/AriaNg](https://github.com/mayswind/AriaNg). Fork-owned features are the BT small-file filter (new tasks and bulk filtering of downloading tasks), the inline task-list file list, and the new-task download path with per-RPC path history; everything else is inherited upstream code. The maintenance focus is the BT filter and the task-list file list; spend review, testing, and improvement effort there. The download-path history and inherited code get real-bug fixes only, kept minimal and local so later upstream merges stay easy.
 
 AriaNg is an AngularJS 1.6 frontend built with Gulp. Application code lives in `src/`: controllers and services are under `src/scripts/`, page templates under `src/views/`, shared and theme CSS under `src/styles/`, and translations under `src/langs/`. `src/index.html` is the application shell. Node-based regression tests live in `test/`. Build and release automation is defined in `gulpfile.js` and `.github/workflows/`. Treat `dist/` and `.tmp/` as generated output; edit sources instead.
 
@@ -23,6 +23,7 @@ When a change alters user-visible behavior or a documented contract, update the 
 - `npm ci` installs locked dependencies; use it for initial setup or when the lockfile changes. The fork release and Pages workflows use Node 24 and `npm ci`; upstream development workflows use Node 24 and `npm install`. Without a local Node 24, run the same commands in a disposable `node:24` container.
 - `npm test` runs all Node assertion-based regression tests.
 - `npm run test:browser` sequentially builds and checks both distributions with mocked RPC in Chromium; see [upstream merge and QA setup](docs/upstream-merge.md).
+- `test/aria2/run.sh [git-ref]` (or `npm run test:aria2`) needs only Docker: it drives a build against disposable real aria2c containers (two downloaders and a seeder behind a local tracker) and checks task dirs, queue order, file selections, and written files, including BT filter runs end to end. Pass an older ref as a before-fix control.
 - `npx gulp lint` checks JavaScript with ESLint.
 - `npm run build` cleans and creates the standard build in `dist/`.
 - `npx gulp clean build-bundle` creates the All-In-One `dist/index.html` build.
@@ -37,7 +38,7 @@ Follow `.editorconfig`: use spaces, LF line endings, a final newline, and no tra
 
 Tests use Node's `assert` module and lightweight VM stubs. Add meaningful behavior regression tests to `test/<feature>.test.js` and register new suites in `npm test`; reproduce a bug before fixing it where feasible. Do not add implementation-mirroring tests for documentation, formatting, or other low-impact edits.
 
-Each suite loads source files into a VM context with hand-written stubs that cover only what the code calls today. When code starts calling another dependency method, update the stubs in every suite that loads that file; a `... is not a function` failure after a source change usually means a stale stub, not a product bug. The existing harnesses (`loadFilterService`, `createSubmission`, `loadWebSocketRpcService`) are the quickest way to reproduce a bug before fixing it. They do not model Angular scopes: `ng-if` and `ng-repeat` create child scopes, so a primitive `ng-model` stops following the directive scope once the user types. Confirm template or binding bugs in a real browser (`npm run test:browser`, extending it if needed), and run the check against the old code to prove it catches the bug.
+Each suite loads source files into a VM context with hand-written stubs that cover only what the code calls today. When code starts calling another dependency method, update the stubs in every suite that loads that file; a `... is not a function` failure after a source change usually means a stale stub, not a product bug. The existing harnesses (`loadFilterService`, `createSubmission`, `loadWebSocketRpcService`) are the quickest way to reproduce a bug before fixing it. They do not model Angular template behavior: `ng-if` and `ng-repeat` create child scopes, so a primitive `ng-model` stops following the directive scope once the user types, and text inputs trim surrounding whitespace by default (`ngTrim`). Confirm template or binding bugs in a real browser (`npm run test:browser`, extending it if needed), and run the check against the old code to prove it catches the bug.
 
 | Change | Completion checks |
 | --- | --- |
@@ -45,7 +46,7 @@ Each suite loads source files into a VM context with hand-written stubs that cov
 | BT copy or translations | `node test/i18n-contract.test.js`; inspect affected UI when text length or meaning changes its presentation. |
 | Local JavaScript behavior | Focused regression tests while developing; `npm test` and lint at handoff. Build when packaging, injection, or minification may be affected. |
 | CSS, templates, UI interaction | Check affected states and representative shared layouts; standard build and relevant tests. Include 375px light/dark checks when mobile layout or themes are affected; check bundle output when asset loading or embedding is affected. |
-| BT state machine, RPC, recovery, persistence | Relevant failure-path regressions, `npm test`, both builds, and integration scenarios selected for the changed behavior. |
+| BT state machine, RPC, recovery, persistence | Relevant failure-path regressions, `npm test`, both builds, and integration scenarios selected for the changed behavior; `test/aria2/run.sh` for new-task options, paths, transports, task ordering, or filter RPC semantics. |
 | Build chain, dependencies, release | `npm test`, both builds, and affected artifact checks; releases also require `npm run test:i18n-release` and the release contract below. |
 
 Both `npx gulp clean build` and `npx gulp clean build-bundle` include lint, so a separate final lint run is unnecessary when building. Use `npx gulp lint` for early feedback or when no build is needed. Run the two clean/build variants sequentially because they share output directories. Expand verification for concrete dependency impact, failures, or unresolved risk, not simply because a file changed.
@@ -57,7 +58,7 @@ Results remain valid for the tested source/configuration state. Documentation-on
 These patterns caused real bugs outside the BT filter; the Skill keeps the BT-specific ledger.
 
 - **JSON-RPC success is the presence of `result`, not its truthiness.** `aria2.changePosition` returns `0` when a task moves to the top; a truthiness check silently drops the callback and froze list refreshing after drag-and-drop. Keep presence checks in every transport.
-- **Blank required options are omitted, never sent as `''`.** Options marked `required` in `aria2Options.js` are deleted when cleared on the options tab. aria2 accepts an empty `dir` and downloads into its own working directory. `buildRequestOptions()` in `aria2RpcService` drops them for every add request, including the `#!/new` URL command; `getSubmissionOptions()` in `controllers/new.js` additionally trims `dir` for history and the exported command.
+- **Blank required options are omitted, never sent as `''`.** Options marked `required` in `aria2Options.js` are deleted when cleared on the options tab. aria2 accepts an empty `dir` and downloads into its own working directory. `buildRequestOptions()` in `aria2RpcService` drops them for every add request, including the `#!/new` URL command; `getSubmissionOptions()` in `controllers/new.js` additionally drops a blank `dir` from the exported command, which bypasses the RPC layer.
 - **A successful `system.multicall` does not mean every item succeeded.** Keep per-item `success`, `data`, `context.task`, and input order; see the conventions in [docs/upstream-merge.md](docs/upstream-merge.md).
 - **Per-server state is keyed by `ariaNgSettingService.getCurrentRpcIdentity()`.** The identity is `protocol|host|port|interface` (no secret) taken from a page-load snapshot, so unsaved setting edits cannot redirect in-flight work.
 
