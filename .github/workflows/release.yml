@@ -9,7 +9,7 @@ on:
       version:
         description: Version to release (without a v prefix)
         required: true
-        default: '2.2.6'
+        default: '2.2.7'
         type: string
 
 permissions:
