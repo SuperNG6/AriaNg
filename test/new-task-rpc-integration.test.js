@@ -15,7 +15,6 @@ function createSubmission(options = {}) {
     const requests = [];
     const storage = {};
     const paths = [];
-    const histories = [];
     const module = {
         constant(name, value) { values[name] = value; return module; },
         factory(name, value) { definitions[name] = value; return module; },
@@ -50,7 +49,7 @@ function createSubmission(options = {}) {
         },
         aria2SettingService: {getNewTaskOptionKeys: () => [], getSpecifiedOptions: () => ({}),
             getScopedSettingHistory: () => [],
-            addSettingHistory: (key, value, scope) => { histories.push({key, value, scope}); }},
+            addSettingHistory: noop},
         ariaNgStorageService: {get: (key) => storage[key], set: (key, value) => { storage[key] = plain(value); return true; }},
         ariaNgKeyboardService: {}, ariaNgFileService: {}, ariaNgNotificationService: {},
         ariaNgLocalizationService: {}, aria2WebSocketRpcService: {}, aria2HttpRpcService: transport
@@ -69,7 +68,7 @@ function createSubmission(options = {}) {
         'magnet:?xt=urn:btih:' + 'b'.repeat(40),
         'https://example.invalid/data.torrent'
     ].join('\n');
-    return {scope, requests, paths, storage, histories,
+    return {scope, requests, paths, storage,
         filter: get('ariaNgBtFileFilterService'),
         replaceIntent: (value) => { intent = value; },
         persistedJobs: () => storage[values.ariaNgConstants.btFileFilterQueueStorageKey]
@@ -163,17 +162,6 @@ test('a blank download path is omitted from every submission and the exported co
     kept.scope.context.options.dir = '/data/downloads';
     kept.scope.startDownload(false);
     assert.strictEqual(kept.requests[0].requestBody.params[0][0].params[2].dir, '/data/downloads');
-});
-
-// 粘贴路径常带首尾空白；aria2 会按原样建目录，历史也会记住错误路径。
-test('a pasted download path is trimmed before submission and history', () => {
-    const submission = createSubmission({enabled: false, urls: 'https://example.invalid/file.iso'});
-    submission.scope.context.options.dir = '  /data/downloads \n';
-    submission.scope.startDownload(false);
-    assert.strictEqual(submission.requests[0].requestBody.params[0][0].params[2].dir, '/data/downloads');
-    assert.deepStrictEqual(submission.histories, [
-        {key: 'dir', value: '/data/downloads', scope: 'http|test.invalid|6800|jsonrpc'}
-    ]);
 });
 
 // 批量结果包含失败项；“创建后打开详情”必须跳到第一个成功创建的任务。

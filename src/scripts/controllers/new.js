@@ -28,19 +28,13 @@
             };
         };
 
-        // 链接页的下载路径可直接输入或粘贴：提交副本去掉首尾空白，清空时删除 dir，与选项页一致地回退到 aria2 全局目录。
-        // RPC 层也会丢弃空的必填项；这里另需处理导出命令和路径历史。
+        // 链接页的下载路径输入框清空后会留下空字符串；提交副本中去掉它，与选项页一致地回退到 aria2 全局目录。
+        // RPC 层也会丢弃空的必填项；这里另需覆盖导出命令。首尾空白已由 Angular 文本输入框的 ngTrim 去掉。
         var getSubmissionOptions = function () {
             var options = angular.copy($scope.context.options);
 
-            if (angular.isDefined(options.dir)) {
-                var dir = String(options.dir || '').trim();
-
-                if (dir) {
-                    options.dir = dir;
-                } else {
-                    delete options.dir;
-                }
+            if (angular.isDefined(options.dir) && !String(options.dir || '').trim()) {
+                delete options.dir;
             }
 
             return options;
